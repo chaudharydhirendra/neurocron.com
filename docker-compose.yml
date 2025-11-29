@@ -1,0 +1,278 @@
+# ===========================================
+# NeuroCron Docker Compose Configuration
+# ===========================================
+
+version: '3.9'
+
+services:
+  # ===========================================
+  # Infrastructure Services
+  # ===========================================
+
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: neurocron-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-neurocron_db}
+      POSTGRES_USER: ${POSTGRES_USER:-neurocron}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-neurocron_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-neurocron} -d ${POSTGRES_DB:-neurocron_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - neurocron-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: neurocron-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - neurocron-network
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.6
+    container_name: neurocron-meilisearch
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILISEARCH_MASTER_KEY:-neurocron_search_key}
+      MEILI_ENV: development
+    volumes:
+      - meilisearch_data:/meili_data
+    ports:
+      - "7700:7700"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - neurocron-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: neurocron-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-neurocron}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-neurocron_minio_secret}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - neurocron-network
+
+  # ===========================================
+  # Application Services
+  # ===========================================
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: neurocron-backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-neurocron}:${POSTGRES_PASSWORD:-neurocron_secret}@postgres:5432/${POSTGRES_DB:-neurocron_db}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - MEILISEARCH_HOST=meilisearch
+      - MEILISEARCH_PORT=7700
+      - MINIO_HOST=minio
+      - MINIO_PORT=9000
+      - OLLAMA_HOST=${OLLAMA_HOST:-host.docker.internal}
+      - OLLAMA_PORT=${OLLAMA_PORT:-11434}
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8100:8100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    networks:
+      - neurocron-network
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: neurocron-celery-worker
+    restart: unless-stopped
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-neurocron}:${POSTGRES_PASSWORD:-neurocron_secret}@postgres:5432/${POSTGRES_DB:-neurocron_db}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - backend
+      - redis
+    networks:
+      - neurocron-network
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: neurocron-celery-beat
+    restart: unless-stopped
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-neurocron}:${POSTGRES_PASSWORD:-neurocron_secret}@postgres:5432/${POSTGRES_DB:-neurocron_db}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - backend
+      - redis
+    networks:
+      - neurocron-network
+
+  celery-flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: neurocron-celery-flower
+    restart: unless-stopped
+    command: celery -A app.workers.celery_app flower --port=5555
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/1
+    ports:
+      - "5555:5555"
+    depends_on:
+      - celery-worker
+    networks:
+      - neurocron-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: neurocron-frontend
+    restart: unless-stopped
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8100
+      - NEXT_PUBLIC_WS_URL=ws://backend:8100
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - "3100:3000"
+    depends_on:
+      - backend
+    networks:
+      - neurocron-network
+
+  # ===========================================
+  # AI & Specialized Services
+  # ===========================================
+
+  trend-service:
+    build:
+      context: ./services/trend-service
+      dockerfile: Dockerfile
+    container_name: neurocron-trend-service
+    restart: unless-stopped
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-neurocron}:${POSTGRES_PASSWORD:-neurocron_secret}@postgres:5432/${POSTGRES_DB:-neurocron_db}
+    ports:
+      - "8103:8103"
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - neurocron-network
+
+  scraper-service:
+    build:
+      context: ./services/scraper-service
+      dockerfile: Dockerfile
+    container_name: neurocron-scraper-service
+    restart: unless-stopped
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-neurocron}:${POSTGRES_PASSWORD:-neurocron_secret}@postgres:5432/${POSTGRES_DB:-neurocron_db}
+    ports:
+      - "8104:8104"
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - neurocron-network
+
+  simulation-service:
+    build:
+      context: ./services/simulation-service
+      dockerfile: Dockerfile
+    container_name: neurocron-simulation-service
+    restart: unless-stopped
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-neurocron}:${POSTGRES_PASSWORD:-neurocron_secret}@postgres:5432/${POSTGRES_DB:-neurocron_db}
+    ports:
+      - "8105:8105"
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - neurocron-network
+
+# ===========================================
+# Networks
+# ===========================================
+
+networks:
+  neurocron-network:
+    driver: bridge
+    name: neurocron-network
+
+# ===========================================
+# Volumes
+# ===========================================
+
+volumes:
+  postgres_data:
+    name: neurocron-postgres-data
+  redis_data:
+    name: neurocron-redis-data
+  meilisearch_data:
+    name: neurocron-meilisearch-data
+  minio_data:
+    name: neurocron-minio-data
+
