@@ -1,21 +1,27 @@
 """
 NeuroCron NeuroPlan & BrainSpark APIs
 AI-powered strategy and creative idea generation
+
+AI Tiers Used:
+- NeuroPlan (Strategy): Tier 1 - Claude Opus 4.5 (best reasoning)
+- BrainSpark (Ideas): Tier 2 - GPT-4.1 (best creative)
 """
 
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime, timedelta
 
 from app.core.deps import get_db
 from app.api.v1.auth import get_current_user
 from app.models.organization import OrganizationMember
 from app.models.user import User
+from app.services.ai import ai_generator, PromptTemplates
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -76,6 +82,7 @@ class IdeaGenerateRequest(BaseModel):
     brand_tone: str  # professional, playful, bold, elegant, friendly
     channels: List[str]
     count: int = Field(5, ge=1, le=10)
+    budget_constraint: Optional[str] = "moderate"
 
 
 class CreativeIdea(BaseModel):
@@ -101,7 +108,9 @@ async def generate_strategy(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Generate a comprehensive 12-month marketing strategy.
+    Generate a comprehensive 12-month marketing strategy using AI.
+    
+    Uses Tier 1 (Claude Opus 4.5) for best strategic reasoning.
     
     NeuroPlan creates a complete roadmap including:
     - Quarterly plans with themes and initiatives
@@ -121,9 +130,80 @@ async def generate_strategy(
             detail="Not a member of this organization"
         )
     
-    # Generate strategy (would use AI in production)
-    strategy = _generate_sample_strategy(request)
-    return strategy
+    # Get prompts for strategy generation
+    system_prompt, user_prompt = PromptTemplates.get_strategy_prompt(
+        business_name=request.business_name,
+        business_description=request.business_description,
+        target_audience=request.target_audience,
+        goals=request.goals,
+        budget_range=request.budget_range,
+        timeline_months=request.timeline_months,
+        focus_areas=request.focus_areas,
+    )
+    
+    # Generate strategy using AI (Tier 1: Strategic - Claude Opus 4.5)
+    logger.info(f"Generating strategy for {request.business_name} using AI")
+    ai_response = await ai_generator.generate(
+        task_type="strategy",
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.7,
+        max_tokens=4000,
+    )
+    
+    if not ai_response.success:
+        logger.error(f"AI generation failed: {ai_response.error}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Strategy generation failed: {ai_response.error}"
+        )
+    
+    # Parse the AI response
+    strategy_data = ai_response.as_json
+    if not strategy_data:
+        logger.error("Failed to parse AI response as JSON")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to parse strategy response"
+        )
+    
+    # Log cost for monitoring
+    logger.info(
+        f"Strategy generated: model={ai_response.model_used}, "
+        f"tokens_in={ai_response.tokens_in}, tokens_out={ai_response.tokens_out}, "
+        f"cost=${ai_response.cost_estimate:.4f}"
+    )
+    
+    # Build response with proper structure
+    try:
+        quarterly_plans = [
+            QuarterlyPlan(**q) for q in strategy_data.get("quarterly_plans", [])
+        ]
+        channel_strategies = [
+            ChannelStrategy(**c) for c in strategy_data.get("channel_strategies", [])
+        ]
+        
+        strategy = MarketingStrategy(
+            id=f"strategy-{uuid4()}",
+            executive_summary=strategy_data.get("executive_summary", ""),
+            vision=strategy_data.get("vision", ""),
+            mission=strategy_data.get("mission", ""),
+            quarterly_plans=quarterly_plans,
+            channel_strategies=channel_strategies,
+            competitor_positioning=strategy_data.get("competitor_positioning", ""),
+            unique_selling_propositions=strategy_data.get("unique_selling_propositions", []),
+            messaging_framework=strategy_data.get("messaging_framework", {}),
+            success_metrics=strategy_data.get("success_metrics", []),
+            risks_and_mitigations=strategy_data.get("risks_and_mitigations", []),
+            total_budget_estimate=strategy_data.get("total_budget_estimate", ""),
+        )
+        return strategy
+    except Exception as e:
+        logger.error(f"Failed to structure strategy response: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to structure strategy response"
+        )
 
 
 @router.post("/brainspark/generate")
@@ -134,7 +214,9 @@ async def generate_ideas(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Generate creative marketing ideas.
+    Generate creative marketing ideas using AI.
+    
+    Uses Tier 2 (GPT-4.1) for best creative output.
     
     BrainSpark creates campaign concepts, ad angles, content ideas,
     and creative hooks based on your goals and audience.
@@ -151,11 +233,76 @@ async def generate_ideas(
             detail="Not a member of this organization"
         )
     
-    ideas = _generate_sample_ideas(request)
+    # Get prompts for ideas generation
+    system_prompt, user_prompt = PromptTemplates.get_ideas_prompt(
+        campaign_goal=request.campaign_goal,
+        target_audience=request.target_audience,
+        brand_tone=request.brand_tone,
+        channels=request.channels,
+        count=request.count,
+        budget_constraint=request.budget_constraint or "moderate",
+    )
+    
+    # Generate ideas using AI (Tier 2: Creative - GPT-4.1)
+    logger.info(f"Generating {request.count} creative ideas using AI")
+    ai_response = await ai_generator.generate(
+        task_type="creative_ideas",
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.85,  # Higher temperature for more creative output
+        max_tokens=3000,
+    )
+    
+    if not ai_response.success:
+        logger.error(f"AI generation failed: {ai_response.error}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ideas generation failed: {ai_response.error}"
+        )
+    
+    # Parse the AI response
+    ideas_data = ai_response.as_json
+    if not ideas_data:
+        logger.error("Failed to parse AI response as JSON")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to parse ideas response"
+        )
+    
+    # Log cost for monitoring
+    logger.info(
+        f"Ideas generated: model={ai_response.model_used}, "
+        f"tokens_in={ai_response.tokens_in}, tokens_out={ai_response.tokens_out}, "
+        f"cost=${ai_response.cost_estimate:.4f}"
+    )
+    
+    # Build response
+    ideas = []
+    for i, idea in enumerate(ideas_data.get("ideas", [])):
+        ideas.append(CreativeIdea(
+            id=f"idea-{uuid4()}",
+            title=idea.get("title", f"Idea {i+1}"),
+            category=idea.get("category", "campaign"),
+            description=idea.get("description", ""),
+            hook=idea.get("hook", ""),
+            target_emotion=idea.get("target_emotion", ""),
+            estimated_impact=idea.get("estimated_impact", "medium"),
+            difficulty=idea.get("difficulty", "medium"),
+            timeline=idea.get("timeline", ""),
+            required_resources=idea.get("required_resources", []),
+            example_execution=idea.get("example_execution", ""),
+        ))
+    
     return {
-        "ideas": ideas,
+        "ideas": [idea.model_dump() for idea in ideas],
         "total": len(ideas),
-        "recommendation": "Start with the high-impact, easy-difficulty ideas for quick wins.",
+        "recommendation": ideas_data.get("top_recommendation", "Start with the high-impact, easy-difficulty ideas for quick wins."),
+        "combination_suggestion": ideas_data.get("combination_suggestion"),
+        "ai_metadata": {
+            "model": ai_response.model_used,
+            "tier": ai_response.tier.value,
+            "cost": ai_response.cost_estimate,
+        }
     }
 
 
@@ -171,30 +318,48 @@ async def get_strategy_templates(
                 "name": "SaaS Growth Playbook",
                 "description": "Comprehensive strategy for B2B SaaS companies",
                 "focus_areas": ["content_marketing", "paid_ads", "seo", "partnerships"],
+                "typical_timeline": 12,
+                "budget_range": "medium",
             },
             {
                 "id": "ecommerce_launch",
                 "name": "E-commerce Launch Strategy",
                 "description": "Launch and scale an online store",
                 "focus_areas": ["social_commerce", "influencer", "email", "paid_ads"],
+                "typical_timeline": 6,
+                "budget_range": "medium",
             },
             {
                 "id": "local_business",
                 "name": "Local Business Domination",
                 "description": "Become the go-to in your local market",
                 "focus_areas": ["local_seo", "reviews", "community", "google_business"],
+                "typical_timeline": 6,
+                "budget_range": "low",
             },
             {
                 "id": "brand_awareness",
                 "name": "Brand Awareness Blitz",
                 "description": "Build recognition and trust fast",
                 "focus_areas": ["pr", "influencer", "content", "video"],
+                "typical_timeline": 3,
+                "budget_range": "high",
             },
             {
                 "id": "lead_generation",
                 "name": "B2B Lead Engine",
                 "description": "Systematic lead generation machine",
                 "focus_areas": ["linkedin", "content", "webinars", "email"],
+                "typical_timeline": 12,
+                "budget_range": "medium",
+            },
+            {
+                "id": "product_launch",
+                "name": "Product Launch Campaign",
+                "description": "Launch a new product with maximum impact",
+                "focus_areas": ["pr", "social", "influencer", "email", "paid_ads"],
+                "typical_timeline": 3,
+                "budget_range": "high",
             },
         ]
     }
@@ -207,235 +372,47 @@ async def get_idea_categories(
     """Get creative idea categories."""
     return {
         "categories": [
-            {"id": "campaign", "name": "Campaign Concepts", "icon": "megaphone"},
-            {"id": "content", "name": "Content Ideas", "icon": "file-text"},
-            {"id": "social", "name": "Social Media", "icon": "share"},
-            {"id": "ad", "name": "Ad Angles", "icon": "target"},
-            {"id": "pr", "name": "PR & Stunts", "icon": "newspaper"},
-            {"id": "event", "name": "Events & Activations", "icon": "calendar"},
-            {"id": "partnership", "name": "Partnerships", "icon": "handshake"},
-            {"id": "viral", "name": "Viral Hooks", "icon": "trending-up"},
+            {"id": "campaign", "name": "Campaign Concepts", "icon": "megaphone", "description": "Full campaign ideas with multiple touchpoints"},
+            {"id": "content", "name": "Content Ideas", "icon": "file-text", "description": "Blog posts, videos, podcasts, guides"},
+            {"id": "social", "name": "Social Media", "icon": "share", "description": "Engaging social content and series"},
+            {"id": "ad", "name": "Ad Angles", "icon": "target", "description": "Creative ad concepts and hooks"},
+            {"id": "pr", "name": "PR & Stunts", "icon": "newspaper", "description": "Press-worthy moments and stunts"},
+            {"id": "event", "name": "Events & Activations", "icon": "calendar", "description": "Virtual and in-person experiences"},
+            {"id": "partnership", "name": "Partnerships", "icon": "handshake", "description": "Co-marketing and collaboration ideas"},
+            {"id": "viral", "name": "Viral Hooks", "icon": "trending-up", "description": "Shareable, buzzworthy concepts"},
         ]
     }
 
 
-def _generate_sample_strategy(request: StrategyGenerateRequest) -> MarketingStrategy:
-    """Generate a sample strategy."""
-    quarters = []
-    themes = ["Foundation & Awareness", "Growth & Acquisition", "Expansion & Optimization", "Scale & Retention"]
-    
-    for i in range(min(4, request.timeline_months // 3)):
-        quarters.append(QuarterlyPlan(
-            quarter=f"Q{i+1}",
-            theme=themes[i],
-            objectives=[
-                f"Establish {request.business_name} presence" if i == 0 else f"Scale {request.business_name} reach",
-                "Build brand awareness" if i < 2 else "Optimize conversion rates",
-                "Generate qualified leads" if i < 2 else "Maximize customer LTV",
-            ],
-            key_initiatives=[
-                "Launch content marketing program",
-                "Implement paid advertising campaigns",
-                "Build email nurture sequences",
-                "Develop social media presence",
-            ],
-            budget_allocation={
-                "paid_ads": 35 + (i * 5),
-                "content": 25 - (i * 2),
-                "social": 20,
-                "email": 10,
-                "tools": 10 - (i * 2) if i < 2 else 5,
+@router.get("/ai/status")
+async def get_ai_status(
+    current_user: User = Depends(get_current_user)
+):
+    """Get current AI service status and tier information."""
+    return {
+        "tiers": {
+            "strategic": {
+                "model": "Claude Opus 4.5",
+                "provider": "Anthropic",
+                "available": ai_generator.anthropic_available,
+                "use_cases": ["Strategy generation", "Competitor analysis", "Business decisions"],
+                "cost": "$5/$25 per 1M tokens (in/out)",
             },
-            kpis=["Website traffic", "Lead generation", "Conversion rate", "Customer acquisition cost"],
-        ))
-    
-    channel_strategies = [
-        ChannelStrategy(
-            channel="Paid Search (Google Ads)",
-            priority="high",
-            tactics=["Keyword targeting", "Retargeting", "Performance Max campaigns"],
-            budget_percentage=30,
-            expected_outcomes=["High-intent traffic", "Direct conversions", "Brand visibility"],
-        ),
-        ChannelStrategy(
-            channel="Social Media (LinkedIn, Meta)",
-            priority="high",
-            tactics=["Organic posting", "Paid campaigns", "Community building"],
-            budget_percentage=25,
-            expected_outcomes=["Brand awareness", "Engagement", "Lead generation"],
-        ),
-        ChannelStrategy(
-            channel="Content Marketing",
-            priority="high",
-            tactics=["Blog posts", "Ebooks/guides", "Video content", "Podcasts"],
-            budget_percentage=20,
-            expected_outcomes=["SEO growth", "Thought leadership", "Lead nurturing"],
-        ),
-        ChannelStrategy(
-            channel="Email Marketing",
-            priority="medium",
-            tactics=["Welcome sequences", "Newsletters", "Promotional campaigns"],
-            budget_percentage=15,
-            expected_outcomes=["Lead nurturing", "Customer retention", "Direct revenue"],
-        ),
-        ChannelStrategy(
-            channel="SEO",
-            priority="medium",
-            tactics=["On-page optimization", "Link building", "Technical SEO"],
-            budget_percentage=10,
-            expected_outcomes=["Organic traffic", "Long-term visibility", "Authority"],
-        ),
-    ]
-    
-    return MarketingStrategy(
-        id="strategy-" + str(UUID(int=0)),
-        executive_summary=f"This comprehensive marketing strategy for {request.business_name} focuses on building brand awareness, generating qualified leads, and driving sustainable growth over {request.timeline_months} months.",
-        vision=f"Position {request.business_name} as the leading solution for {request.target_audience}.",
-        mission="Deliver exceptional value through targeted marketing that resonates with our audience and drives measurable business results.",
-        quarterly_plans=quarters,
-        channel_strategies=channel_strategies,
-        competitor_positioning="Differentiate through superior customer experience, innovative features, and thought leadership content.",
-        unique_selling_propositions=[
-            "AI-powered automation that saves 10+ hours per week",
-            "Unified platform replacing 5+ separate tools",
-            "Real-time insights and predictive analytics",
-            "White-glove onboarding and support",
-        ],
-        messaging_framework={
-            "primary_message": f"{request.business_name} helps {request.target_audience} achieve their goals faster with intelligent automation.",
-            "supporting_messages": [
-                "Save time with AI-powered workflows",
-                "Make data-driven decisions with real-time insights",
-                "Scale your efforts without scaling your team",
-            ],
-            "tone": "Professional yet approachable, confident but not arrogant",
-            "key_proof_points": ["Customer testimonials", "Case studies", "Industry recognition"],
+            "creative": {
+                "model": "GPT-4.1",
+                "provider": "OpenAI",
+                "available": ai_generator.openai_available,
+                "use_cases": ["Creative ideas", "Ad copy", "Personas", "Content writing"],
+                "cost": "$10/$30 per 1M tokens (in/out)",
+            },
+            "standard": {
+                "model": "Llama 3.1:8b",
+                "provider": "Ollama (local)",
+                "available": ai_generator.ollama_available,
+                "use_cases": ["Social posts", "Emails", "Chat", "Translations"],
+                "cost": "FREE (runs locally)",
+            },
         },
-        success_metrics=[
-            "Monthly website traffic growth: 20%+",
-            "Lead generation: 500+ MQLs per month by Q4",
-            "Conversion rate: 3%+ from visitor to lead",
-            "Customer acquisition cost: Under $200",
-            "Brand awareness lift: 50% YoY",
-        ],
-        risks_and_mitigations=[
-            {"risk": "Market saturation", "mitigation": "Focus on niche segments and differentiation"},
-            {"risk": "Budget constraints", "mitigation": "Prioritize high-ROI channels, use organic growth tactics"},
-            {"risk": "Competitor response", "mitigation": "Monitor competitors, maintain agility to pivot"},
-        ],
-        total_budget_estimate=f"${50000 if request.budget_range == 'low' else 150000 if request.budget_range == 'medium' else 500000}+ annual marketing budget recommended",
-    )
-
-
-def _generate_sample_ideas(request: IdeaGenerateRequest) -> List[CreativeIdea]:
-    """Generate sample creative ideas."""
-    ideas_pool = [
-        CreativeIdea(
-            id="idea-1",
-            title="The Transformation Challenge",
-            category="campaign",
-            description="30-day challenge where participants document their transformation using your product/service.",
-            hook="What can you achieve in 30 days?",
-            target_emotion="Aspiration & Achievement",
-            estimated_impact="high",
-            difficulty="medium",
-            timeline="4-6 weeks prep, 30-day campaign",
-            required_resources=["Landing page", "Email sequences", "Social templates", "Prizes"],
-            example_execution="Participants share daily/weekly progress on social with branded hashtag. Winners get featured and prizes.",
-        ),
-        CreativeIdea(
-            id="idea-2",
-            title="Behind the Scenes Series",
-            category="content",
-            description="Weekly content showing the real people, processes, and stories behind your brand.",
-            hook="See how the magic happens",
-            target_emotion="Trust & Authenticity",
-            estimated_impact="medium",
-            difficulty="easy",
-            timeline="Ongoing weekly content",
-            required_resources=["Video equipment", "Content calendar", "Team participation"],
-            example_execution="Weekly video/post featuring different team members, their work, and personal stories.",
-        ),
-        CreativeIdea(
-            id="idea-3",
-            title="User-Generated Takeover",
-            category="social",
-            description="Let your best customers take over your social media for a day.",
-            hook="Our customers tell it best",
-            target_emotion="Community & Belonging",
-            estimated_impact="high",
-            difficulty="easy",
-            timeline="1 day per takeover, monthly",
-            required_resources=["Customer outreach", "Content guidelines", "Approval process"],
-            example_execution="Top customer shares their day, tips, and experience using your product through your channels.",
-        ),
-        CreativeIdea(
-            id="idea-4",
-            title="The Comparison Calculator",
-            category="ad",
-            description="Interactive tool that shows exactly how much time/money users save with your solution.",
-            hook="See your savings in real-time",
-            target_emotion="Logic & Value",
-            estimated_impact="high",
-            difficulty="medium",
-            timeline="2-3 weeks development",
-            required_resources=["Developer time", "Industry benchmarks", "Landing page"],
-            example_execution="Interactive calculator ad driving to personalized results page with tailored follow-up.",
-        ),
-        CreativeIdea(
-            id="idea-5",
-            title="Trend Hijacking Campaign",
-            category="viral",
-            description="React to trending topics with relevant, branded content in real-time.",
-            hook="Be part of the conversation",
-            target_emotion="Relevance & Timeliness",
-            estimated_impact="high",
-            difficulty="hard",
-            timeline="Real-time, ongoing",
-            required_resources=["Monitoring tools", "Creative team on standby", "Approval workflow"],
-            example_execution="Pre-approved templates and rapid response process for trending moments.",
-        ),
-        CreativeIdea(
-            id="idea-6",
-            title="Expert Webinar Series",
-            category="content",
-            description="Monthly webinars featuring industry experts and thought leaders.",
-            hook="Learn from the best",
-            target_emotion="Education & Authority",
-            estimated_impact="medium",
-            difficulty="medium",
-            timeline="Monthly, 3-month minimum",
-            required_resources=["Webinar platform", "Expert network", "Promotion plan"],
-            example_execution="Partner with influencers for co-hosted educational sessions with Q&A.",
-        ),
-        CreativeIdea(
-            id="idea-7",
-            title="Customer Success Story Film",
-            category="pr",
-            description="Mini-documentary style video showcasing a customer's transformation journey.",
-            hook="Real results, real stories",
-            target_emotion="Inspiration & Trust",
-            estimated_impact="high",
-            difficulty="hard",
-            timeline="4-6 weeks production",
-            required_resources=["Video production", "Customer participation", "Distribution plan"],
-            example_execution="5-10 minute documentary distributed across YouTube, LinkedIn, and sales process.",
-        ),
-        CreativeIdea(
-            id="idea-8",
-            title="Controversial Take Post",
-            category="social",
-            description="Share a bold, contrarian opinion about your industry to spark discussion.",
-            hook="Here's an unpopular opinion...",
-            target_emotion="Curiosity & Engagement",
-            estimated_impact="medium",
-            difficulty="easy",
-            timeline="Single post, ongoing opportunity",
-            required_resources=["Thought leadership", "Community management"],
-            example_execution="Well-reasoned contrarian take that positions your brand as a thought leader.",
-        ),
-    ]
-    
-    # Filter by channels and return requested count
-    return ideas_pool[:request.count]
-
+        "fallback_chain": "Strategic → Creative → Standard (local)",
+        "note": "If a higher tier is unavailable, tasks automatically fall back to the next available tier.",
+    }

@@ -1,23 +1,26 @@
 """
 NeuroCron AudienceGenome API
 AI-powered customer persona and segmentation engine
+
+AI Tier Used: Tier 2 - GPT-4.1 (best creative/persona generation)
 """
 
 from typing import List, Optional
 from uuid import UUID
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-import httpx
 
 from app.core.deps import get_db
-from app.core.config import settings
 from app.api.v1.auth import get_current_user
 from app.models.organization import OrganizationMember
 from app.models.user import User
 from app.models.persona import Persona, AudienceSegment
+from app.services.ai import ai_generator, PromptTemplates
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -27,6 +30,7 @@ class PersonaGenerateRequest(BaseModel):
     target_market: str = Field(..., description="Target market description")
     products_services: str = Field(..., description="Products or services offered")
     count: int = Field(3, ge=1, le=5, description="Number of personas to generate")
+    price_point: Optional[str] = Field("mid-range", description="Price positioning")
 
 
 class PersonaResponse(BaseModel):
@@ -72,6 +76,8 @@ async def generate_personas(
 ):
     """
     Generate AI-powered customer personas and save them to the database.
+    
+    Uses Tier 2 (GPT-4.1) for best persona/creative generation.
     """
     # Verify membership
     result = await db.execute(
@@ -85,33 +91,74 @@ async def generate_personas(
             detail="Not a member of this organization"
         )
     
-    # Generate personas using AI (or sample data)
-    generated_personas = _generate_sample_personas(request)
+    # Get prompts for persona generation
+    system_prompt, user_prompt = PromptTemplates.get_persona_prompt(
+        business_type=request.business_type,
+        target_market=request.target_market,
+        products_services=request.products_services,
+        count=request.count,
+        price_point=request.price_point or "mid-range",
+    )
+    
+    # Generate personas using AI (Tier 2: Creative - GPT-4.1)
+    logger.info(f"Generating {request.count} personas using AI")
+    ai_response = await ai_generator.generate(
+        task_type="persona",
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.8,  # Creative temperature for varied personas
+        max_tokens=4000,
+    )
+    
+    if not ai_response.success:
+        logger.error(f"AI generation failed: {ai_response.error}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Persona generation failed: {ai_response.error}"
+        )
+    
+    # Parse the AI response
+    personas_data = ai_response.as_json
+    if not personas_data:
+        logger.error("Failed to parse AI response as JSON")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to parse personas response"
+        )
+    
+    # Log cost for monitoring
+    logger.info(
+        f"Personas generated: model={ai_response.model_used}, "
+        f"tokens_in={ai_response.tokens_in}, tokens_out={ai_response.tokens_out}, "
+        f"cost=${ai_response.cost_estimate:.4f}"
+    )
     
     # Save to database
     saved_personas = []
-    for p_data in generated_personas:
+    for p_data in personas_data.get("personas", []):
         persona = Persona(
             organization_id=org_id,
-            name=p_data["name"],
-            age_range=p_data["age_range"],
-            occupation=p_data["occupation"],
-            income_level=p_data["income_level"],
-            location=p_data["location"],
-            bio=p_data["bio"],
-            goals=p_data["goals"],
-            pain_points=p_data["pain_points"],
-            motivations=p_data["motivations"],
-            objections=p_data["objections"],
-            preferred_channels=p_data["preferred_channels"],
-            buying_triggers=p_data["buying_triggers"],
-            content_preferences=p_data["content_preferences"],
-            brand_affinity=p_data["brand_affinity"],
-            psychographic_profile=p_data["psychographic_profile"],
+            name=p_data.get("name", "Unknown Persona"),
+            age_range=p_data.get("age_range"),
+            occupation=p_data.get("occupation"),
+            income_level=p_data.get("income_level"),
+            location=p_data.get("location"),
+            bio=p_data.get("bio"),
+            goals=p_data.get("goals", []),
+            pain_points=p_data.get("pain_points", []),
+            motivations=p_data.get("motivations", []),
+            objections=p_data.get("objections", []),
+            preferred_channels=p_data.get("preferred_channels", []),
+            buying_triggers=p_data.get("buying_triggers", []),
+            content_preferences=p_data.get("content_preferences", []),
+            brand_affinity=p_data.get("brand_affinity", []),
+            psychographic_profile=p_data.get("psychographic_profile"),
             generation_context={
                 "business_type": request.business_type,
                 "target_market": request.target_market,
                 "products_services": request.products_services,
+                "ai_model": ai_response.model_used,
+                "ai_cost": ai_response.cost_estimate,
             }
         )
         db.add(persona)
@@ -148,14 +195,13 @@ async def generate_personas(
     
     return PersonaGenerateResponse(
         personas=persona_responses,
-        targeting_recommendations=[
-            "Focus on professional networking platforms for B2B personas",
-            "Use video content for younger demographics",
-            "Implement retargeting for high-intent visitors",
-            "Create educational content for problem-aware personas",
-            "Leverage social proof and testimonials for trust-building",
-        ],
-        content_strategy="Focus on solving specific pain points with actionable, educational content. Use a mix of blog posts, short-form video, and case studies to appeal to different preferences."
+        targeting_recommendations=personas_data.get("targeting_recommendations", [
+            "Focus on the primary persona's preferred channels",
+            "Create content addressing specific pain points",
+        ]),
+        content_strategy=personas_data.get("content_strategy", 
+            "Focus on solving specific pain points with actionable content."
+        )
     )
 
 
@@ -362,7 +408,7 @@ async def get_audience_insights(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get AI-generated audience insights."""
+    """Get AI-generated audience insights based on existing personas."""
     # Verify membership
     result = await db.execute(
         select(OrganizationMember)
@@ -375,95 +421,46 @@ async def get_audience_insights(
             detail="Not a member of this organization"
         )
     
+    # Get existing personas for this org
+    result = await db.execute(
+        select(Persona)
+        .where(Persona.organization_id == org_id)
+        .limit(10)
+    )
+    personas = result.scalars().all()
+    
+    # Aggregate insights from personas
+    all_channels = []
+    all_content_prefs = []
+    for p in personas:
+        all_channels.extend(p.preferred_channels or [])
+        all_content_prefs.extend(p.content_preferences or [])
+    
+    # Count frequencies
+    from collections import Counter
+    channel_counts = Counter(all_channels)
+    content_counts = Counter(all_content_prefs)
+    
     return {
-        "top_demographics": [
-            {"label": "Age 25-34", "percentage": 38},
-            {"label": "Age 35-44", "percentage": 28},
-            {"label": "Age 18-24", "percentage": 18},
-            {"label": "Age 45-54", "percentage": 12},
-            {"label": "Age 55+", "percentage": 4},
-        ],
-        "top_interests": [
-            {"label": "Technology", "affinity": 85},
-            {"label": "Business", "affinity": 72},
-            {"label": "Marketing", "affinity": 68},
-            {"label": "Entrepreneurship", "affinity": 65},
-            {"label": "Self-improvement", "affinity": 58},
-        ],
-        "top_locations": [
-            {"label": "United States", "percentage": 45},
-            {"label": "United Kingdom", "percentage": 15},
-            {"label": "Canada", "percentage": 12},
-            {"label": "Australia", "percentage": 8},
-            {"label": "Germany", "percentage": 5},
-        ],
-        "device_breakdown": [
-            {"label": "Mobile", "percentage": 62},
-            {"label": "Desktop", "percentage": 32},
-            {"label": "Tablet", "percentage": 6},
-        ],
+        "total_personas": len(personas),
+        "top_channels": [
+            {"channel": ch, "count": cnt, "percentage": round(cnt/len(all_channels)*100) if all_channels else 0}
+            for ch, cnt in channel_counts.most_common(5)
+        ] if all_channels else [],
+        "top_content_preferences": [
+            {"type": ct, "count": cnt}
+            for ct, cnt in content_counts.most_common(5)
+        ] if all_content_prefs else [],
         "engagement_patterns": {
             "best_days": ["Tuesday", "Wednesday", "Thursday"],
             "best_times": ["9-11 AM", "1-3 PM", "7-9 PM"],
-            "preferred_content": ["Video", "Infographics", "How-to guides"],
         },
+        "recommendations": [
+            "Focus content on the most preferred channels",
+            "Create varied content formats to match preferences",
+            "Schedule posts during peak engagement times",
+        ] if personas else [
+            "Generate personas to get personalized insights",
+            "Connect analytics to see real engagement data",
+        ],
     }
-
-
-def _generate_sample_personas(request: PersonaGenerateRequest) -> List[dict]:
-    """Generate sample personas (fallback when AI unavailable)."""
-    sample_personas = [
-        {
-            "name": "Alex Marketing Manager",
-            "age_range": "28-35",
-            "occupation": "Marketing Manager at mid-size company",
-            "income_level": "$70,000 - $100,000",
-            "location": "Urban, major metropolitan area",
-            "bio": "Alex is a data-driven marketing professional who's always looking for tools to streamline workflows and prove ROI. They manage a small team and report to the CMO.",
-            "goals": ["Increase marketing ROI", "Automate repetitive tasks", "Impress leadership with results"],
-            "pain_points": ["Too many tools to manage", "Difficulty proving attribution", "Limited budget"],
-            "motivations": ["Career advancement", "Team efficiency", "Recognition"],
-            "objections": ["Budget constraints", "Learning curve", "Integration concerns"],
-            "preferred_channels": ["LinkedIn", "Email", "Industry blogs"],
-            "buying_triggers": ["Free trial", "Case studies", "Peer recommendations"],
-            "content_preferences": ["How-to guides", "Webinars", "Comparison charts"],
-            "brand_affinity": ["HubSpot", "Slack", "Notion"],
-            "psychographic_profile": "Achievement-oriented professional who values efficiency and data-backed decisions.",
-        },
-        {
-            "name": "Sarah Startup Founder",
-            "age_range": "30-40",
-            "occupation": "CEO/Founder of early-stage startup",
-            "income_level": "Variable, equity-focused",
-            "location": "Tech hub cities",
-            "bio": "Sarah is a driven entrepreneur who wears many hats. She needs solutions that save time and scale with her growing business.",
-            "goals": ["Scale the business", "Reduce operational overhead", "Find product-market fit"],
-            "pain_points": ["Limited resources", "Time constraints", "Information overload"],
-            "motivations": ["Building something meaningful", "Financial independence", "Innovation"],
-            "objections": ["Is this essential right now?", "Can we build it ourselves?", "Pricing concerns"],
-            "preferred_channels": ["Twitter/X", "Podcasts", "Founder communities"],
-            "buying_triggers": ["Founder testimonials", "Quick wins", "Flexible pricing"],
-            "content_preferences": ["Case studies", "Podcasts", "Quick tips"],
-            "brand_affinity": ["Stripe", "Figma", "Linear"],
-            "psychographic_profile": "Visionary leader who values speed, innovation, and authentic connections.",
-        },
-        {
-            "name": "Mike Enterprise Buyer",
-            "age_range": "40-50",
-            "occupation": "VP of Marketing at enterprise company",
-            "income_level": "$150,000 - $250,000",
-            "location": "Major business centers",
-            "bio": "Mike oversees a large marketing organization and is responsible for major technology decisions. He prioritizes reliability and proven ROI.",
-            "goals": ["Consolidate marketing stack", "Ensure compliance", "Demonstrate value to board"],
-            "pain_points": ["Complex approval processes", "Vendor management", "Change management"],
-            "motivations": ["Job security", "Team success", "Strategic impact"],
-            "objections": ["Security concerns", "Implementation complexity", "Long-term support"],
-            "preferred_channels": ["Industry events", "Analyst reports", "Executive networks"],
-            "buying_triggers": ["Executive references", "Enterprise case studies", "Dedicated support"],
-            "content_preferences": ["White papers", "ROI calculators", "Executive summaries"],
-            "brand_affinity": ["Salesforce", "Adobe", "Oracle"],
-            "psychographic_profile": "Risk-conscious executive who values stability, proof, and strategic alignment.",
-        },
-    ]
-    
-    return sample_personas[:request.count]

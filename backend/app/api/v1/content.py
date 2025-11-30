@@ -1,22 +1,28 @@
 """
 NeuroCron ContentForge API
 AI-powered content generation for all marketing channels
+
+AI Tiers Used:
+- Blog content: Tier 2 (GPT-4.1) - best for long-form creative writing
+- Social posts: Tier 3 (Llama 3.1) - FREE, good for short content
+- Emails: Tier 3 (Llama 3.1) - FREE, good for formatted content
 """
 
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-import httpx
 
 from app.core.deps import get_db
-from app.core.config import settings
 from app.api.v1.auth import get_current_user
 from app.models.user import User
 from app.models.organization import OrganizationMember
+from app.services.ai import ai_generator, PromptTemplates, AITier
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -34,10 +40,13 @@ class ContentGenerateRequest(BaseModel):
 
 class ContentVariation(BaseModel):
     """Single content variation"""
+    id: str
     content: str
     hashtags: Optional[List[str]] = None
     call_to_action: Optional[str] = None
     estimated_engagement: Optional[str] = None
+    title: Optional[str] = None
+    meta_description: Optional[str] = None
 
 
 class ContentGenerateResponse(BaseModel):
@@ -56,6 +65,7 @@ class IdeaGenerateRequest(BaseModel):
 
 class ContentIdea(BaseModel):
     """Single content idea"""
+    id: str
     title: str
     description: str
     content_type: str
@@ -79,6 +89,10 @@ async def generate_content(
     """
     Generate marketing content using AI.
     
+    AI Tier Selection:
+    - Blog/landing_page: Tier 2 (GPT-4.1) - best for long-form creative
+    - Social/email: Tier 3 (Llama 3.1) - FREE, good for short content
+    
     Supports multiple content types:
     - social_post: Social media posts for various platforms
     - blog: Blog articles and long-form content
@@ -98,39 +112,270 @@ async def generate_content(
             detail="Not a member of this organization"
         )
     
-    # Build the prompt
-    prompt = _build_content_prompt(request, variations)
+    # Route to appropriate AI tier and prompt based on content type
+    content_type = request.content_type.lower()
     
-    # Generate using AI
-    try:
-        content = await _generate_with_ai(prompt)
-        parsed_variations = _parse_content_response(content, request.content_type)
-        
-        return ContentGenerateResponse(
-            variations=parsed_variations,
-            metadata={
-                "content_type": request.content_type,
-                "platform": request.platform,
-                "tone": request.tone,
-                "variations_requested": variations,
-            }
+    if content_type == "blog":
+        return await _generate_blog_content(request, variations)
+    elif content_type == "social_post":
+        return await _generate_social_content(request, variations)
+    elif content_type == "email":
+        return await _generate_email_content(request, variations)
+    elif content_type == "ad_copy":
+        # Use ad-specific generation
+        return await _generate_ad_content(request, variations)
+    else:
+        # Default to blog-style generation for landing_page etc
+        return await _generate_blog_content(request, variations)
+
+
+async def _generate_blog_content(
+    request: ContentGenerateRequest,
+    variations: int
+) -> ContentGenerateResponse:
+    """Generate blog/long-form content using Tier 2 (GPT-4.1)."""
+    
+    # Determine word count based on length
+    word_count = {"short": 800, "medium": 1500, "long": 2500}.get(request.length, 1500)
+    
+    system_prompt, user_prompt = PromptTemplates.get_blog_prompt(
+        topic=request.topic,
+        target_audience=request.target_audience or "general audience",
+        keywords=request.keywords or [],
+        tone=request.tone or "professional",
+        word_count=word_count,
+        goal=request.additional_instructions or "educate and engage",
+    )
+    
+    logger.info(f"Generating blog content: {request.topic}")
+    ai_response = await ai_generator.generate(
+        task_type="blog_content",  # Tier 2: Creative
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.7,
+        max_tokens=4000,
+    )
+    
+    if not ai_response.success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Content generation failed: {ai_response.error}"
         )
-    except Exception as e:
-        # Return fallback content
-        return ContentGenerateResponse(
-            variations=[
-                ContentVariation(
-                    content=_get_fallback_content(request),
-                    hashtags=["#marketing", "#content"] if request.content_type == "social_post" else None,
-                    call_to_action="Learn more",
-                )
-            ],
-            metadata={
-                "content_type": request.content_type,
-                "fallback": True,
-                "error": str(e),
-            }
+    
+    blog_data = ai_response.as_json
+    if not blog_data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to parse blog content"
         )
+    
+    # Build full article content
+    sections = blog_data.get("sections", [])
+    full_content = blog_data.get("introduction", "") + "\n\n"
+    for section in sections:
+        full_content += f"## {section.get('heading', '')}\n\n"
+        full_content += section.get("content", "").replace("\\n", "\n") + "\n\n"
+    full_content += blog_data.get("conclusion", "")
+    
+    return ContentGenerateResponse(
+        variations=[
+            ContentVariation(
+                id=f"content-{uuid4()}",
+                content=full_content,
+                title=blog_data.get("title", request.topic),
+                meta_description=blog_data.get("meta_description"),
+                call_to_action=blog_data.get("conclusion", "").split(".")[-2] if blog_data.get("conclusion") else None,
+                estimated_engagement=blog_data.get("estimated_read_time", "5 min read"),
+            )
+        ],
+        metadata={
+            "content_type": "blog",
+            "word_count": len(full_content.split()),
+            "keywords_used": blog_data.get("keywords_used", []),
+            "ai_model": ai_response.model_used,
+            "ai_tier": ai_response.tier.value,
+            "ai_cost": ai_response.cost_estimate,
+        }
+    )
+
+
+async def _generate_social_content(
+    request: ContentGenerateRequest,
+    variations: int
+) -> ContentGenerateResponse:
+    """Generate social media content using Tier 3 (Llama - FREE)."""
+    
+    system_prompt, user_prompt = PromptTemplates.get_social_prompt(
+        platform=request.platform or "twitter",
+        topic=request.topic,
+        goal=request.additional_instructions or "engagement",
+        brand_voice=request.tone or "professional",
+        count=variations,
+    )
+    
+    logger.info(f"Generating social content for {request.platform}: {request.topic}")
+    ai_response = await ai_generator.generate(
+        task_type="social_post",  # Tier 3: Standard (FREE)
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.8,
+        max_tokens=2000,
+    )
+    
+    if not ai_response.success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Content generation failed: {ai_response.error}"
+        )
+    
+    social_data = ai_response.as_json
+    if not social_data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to parse social content"
+        )
+    
+    content_variations = []
+    for post in social_data.get("posts", []):
+        content_variations.append(ContentVariation(
+            id=f"content-{uuid4()}",
+            content=post.get("content", ""),
+            hashtags=post.get("hashtags", []),
+            call_to_action=post.get("engagement_hook"),
+            estimated_engagement=post.get("best_posting_time"),
+        ))
+    
+    return ContentGenerateResponse(
+        variations=content_variations,
+        metadata={
+            "content_type": "social_post",
+            "platform": request.platform,
+            "ai_model": ai_response.model_used,
+            "ai_tier": ai_response.tier.value,
+            "ai_cost": ai_response.cost_estimate,  # Should be $0 for Llama
+        }
+    )
+
+
+async def _generate_email_content(
+    request: ContentGenerateRequest,
+    variations: int
+) -> ContentGenerateResponse:
+    """Generate email content using Tier 3 (Llama - FREE)."""
+    
+    system_prompt, user_prompt = PromptTemplates.get_email_prompt(
+        email_type=request.platform or "newsletter",
+        goal=request.additional_instructions or "engagement",
+        audience=request.target_audience or "subscribers",
+        key_message=request.topic,
+    )
+    
+    logger.info(f"Generating email content: {request.topic}")
+    ai_response = await ai_generator.generate(
+        task_type="email",  # Tier 3: Standard (FREE)
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.7,
+        max_tokens=2000,
+    )
+    
+    if not ai_response.success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Content generation failed: {ai_response.error}"
+        )
+    
+    email_data = ai_response.as_json
+    if not email_data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to parse email content"
+        )
+    
+    # Build full email
+    full_content = f"Subject: {email_data.get('subject_line', '')}\n\n"
+    full_content += email_data.get("body", "").replace("\\n", "\n")
+    if email_data.get("ps_line"):
+        full_content += f"\n\nP.S. {email_data.get('ps_line')}"
+    
+    return ContentGenerateResponse(
+        variations=[
+            ContentVariation(
+                id=f"content-{uuid4()}",
+                content=full_content,
+                title=email_data.get("subject_line"),
+                call_to_action=email_data.get("cta_text"),
+            )
+        ],
+        metadata={
+            "content_type": "email",
+            "subject_variations": email_data.get("subject_variations", []),
+            "preview_text": email_data.get("preview_text"),
+            "ai_model": ai_response.model_used,
+            "ai_tier": ai_response.tier.value,
+            "ai_cost": ai_response.cost_estimate,  # Should be $0 for Llama
+        }
+    )
+
+
+async def _generate_ad_content(
+    request: ContentGenerateRequest,
+    variations: int
+) -> ContentGenerateResponse:
+    """Generate ad copy using Tier 2 (GPT-4.1)."""
+    
+    system_prompt, user_prompt = PromptTemplates.get_ad_prompt(
+        product_name=request.topic,
+        product_description=request.additional_instructions or request.topic,
+        target_audience=request.target_audience or "general audience",
+        platform=request.platform or "meta",
+        ad_type="feed",
+        goal="conversion",
+        count=variations,
+    )
+    
+    logger.info(f"Generating ad content: {request.topic}")
+    ai_response = await ai_generator.generate(
+        task_type="ad_copy",  # Tier 2: Creative
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.85,
+        max_tokens=2500,
+    )
+    
+    if not ai_response.success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Content generation failed: {ai_response.error}"
+        )
+    
+    ad_data = ai_response.as_json
+    if not ad_data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to parse ad content"
+        )
+    
+    content_variations = []
+    for ad in ad_data.get("variants", []):
+        content_variations.append(ContentVariation(
+            id=f"content-{uuid4()}",
+            content=f"{ad.get('headline', '')}\n\n{ad.get('description', '')}",
+            title=ad.get("headline"),
+            call_to_action=ad.get("cta"),
+            estimated_engagement=f"Predicted CTR: {ad.get('predicted_ctr', 'N/A')}%",
+        ))
+    
+    return ContentGenerateResponse(
+        variations=content_variations,
+        metadata={
+            "content_type": "ad_copy",
+            "platform": request.platform,
+            "ai_model": ai_response.model_used,
+            "ai_tier": ai_response.tier.value,
+            "ai_cost": ai_response.cost_estimate,
+        }
+    )
 
 
 @router.post("/ideas", response_model=IdeaGenerateResponse)
@@ -141,10 +386,8 @@ async def generate_ideas(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Generate content ideas for your marketing strategy.
-    
-    Provides fresh content ideas based on your industry,
-    target audience, and current trends.
+    Generate content ideas using AI.
+    Uses Tier 3 (Llama - FREE) for idea brainstorming.
     """
     # Verify membership
     result = await db.execute(
@@ -158,233 +401,99 @@ async def generate_ideas(
             detail="Not a member of this organization"
         )
     
-    # Generate ideas
-    prompt = f"""Generate {request.count} creative marketing content ideas.
+    # Build prompt for idea generation
+    system_prompt = """You are a content strategist. Generate creative, actionable content ideas.
+Output ONLY valid JSON with this structure:
+{"ideas": [{"title": "Idea title", "description": "Brief description", "content_type": "blog/social/video/email", "suggested_platforms": ["platform1", "platform2"], "trending_score": 0.8}]}"""
     
-    Context:
-    - Topic/Industry: {request.topic or request.industry or "General marketing"}
-    - Target Audience: {request.target_audience or "Business professionals"}
+    user_prompt = f"""Generate {request.count} content ideas for:
+Topic: {request.topic or 'general marketing'}
+Industry: {request.industry or 'general'}
+Target Audience: {request.target_audience or 'business professionals'}
+
+Include a mix of content types (blog, social, video, email) and platforms."""
     
-    For each idea, provide:
-    1. A catchy title
-    2. Brief description (2-3 sentences)
-    3. Best content type (social post, blog, video, infographic, etc.)
-    4. Suggested platforms
+    ai_response = await ai_generator.generate(
+        task_type="summarize",  # Tier 3: Standard (FREE)
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.9,  # High creativity for brainstorming
+        max_tokens=2000,
+    )
     
-    Make the ideas unique, actionable, and trendy."""
-    
-    try:
-        response = await _generate_with_ai(prompt)
-        ideas = _parse_ideas_response(response, request.count)
-        return IdeaGenerateResponse(ideas=ideas)
-    except Exception:
-        # Return fallback ideas
-        return IdeaGenerateResponse(
-            ideas=[
-                ContentIdea(
-                    title="Behind the Scenes",
-                    description="Share your team's daily workflow and company culture.",
-                    content_type="social_post",
-                    suggested_platforms=["Instagram", "LinkedIn"],
-                ),
-                ContentIdea(
-                    title="Customer Success Story",
-                    description="Feature a case study highlighting how your product helped a customer.",
-                    content_type="blog",
-                    suggested_platforms=["Website", "LinkedIn"],
-                ),
-                ContentIdea(
-                    title="Industry Trend Analysis",
-                    description="Create a carousel or thread about emerging trends in your industry.",
-                    content_type="social_post",
-                    suggested_platforms=["LinkedIn", "Twitter"],
-                ),
-            ][:request.count]
+    if not ai_response.success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Idea generation failed: {ai_response.error}"
         )
-
-
-@router.post("/rewrite")
-async def rewrite_content(
-    content: str,
-    style: str = Query("professional", description="Target style"),
-    platform: Optional[str] = Query(None, description="Target platform"),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Rewrite existing content in a different style or for a specific platform.
-    """
-    prompt = f"""Rewrite the following content in a {style} style{f' optimized for {platform}' if platform else ''}:
-
-Original content:
-{content}
-
-Rewritten version:"""
     
-    try:
-        rewritten = await _generate_with_ai(prompt)
-        return {
-            "original": content,
-            "rewritten": rewritten.strip(),
-            "style": style,
-            "platform": platform,
-        }
-    except Exception as e:
-        return {
-            "original": content,
-            "rewritten": content,  # Return original if AI fails
-            "error": str(e),
-        }
-
-
-def _build_content_prompt(request: ContentGenerateRequest, variations: int) -> str:
-    """Build the AI prompt for content generation."""
+    ideas_data = ai_response.as_json
+    if not ideas_data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to parse ideas"
+        )
     
-    type_instructions = {
-        "social_post": "Create engaging social media posts that encourage engagement and shares.",
-        "blog": "Write an informative blog article with clear sections, intro, body, and conclusion.",
-        "email": "Create compelling email copy with subject line, preview text, and body content.",
-        "ad_copy": "Write persuasive advertising copy with headline, body, and call-to-action.",
-        "landing_page": "Create landing page copy with headline, value propositions, and CTA sections.",
-    }
-    
-    prompt = f"""You are a professional marketing copywriter. Generate {variations} variations of {request.content_type} content.
-
-TASK: {type_instructions.get(request.content_type, 'Create marketing content.')}
-
-TOPIC: {request.topic}
-"""
-    
-    if request.platform:
-        prompt += f"\nPLATFORM: {request.platform}"
-    if request.tone:
-        prompt += f"\nTONE: {request.tone}"
-    if request.target_audience:
-        prompt += f"\nTARGET AUDIENCE: {request.target_audience}"
-    if request.keywords:
-        prompt += f"\nKEYWORDS TO INCLUDE: {', '.join(request.keywords)}"
-    if request.length:
-        length_guide = {"short": "50-100 words", "medium": "150-300 words", "long": "400-800 words"}
-        prompt += f"\nLENGTH: {length_guide.get(request.length, request.length)}"
-    if request.additional_instructions:
-        prompt += f"\nADDITIONAL INSTRUCTIONS: {request.additional_instructions}"
-    
-    prompt += f"""
-
-Generate exactly {variations} unique variations. For each variation:
-1. The main content
-2. Suggested hashtags (for social posts)
-3. A call-to-action
-
-Format each variation clearly with a separator."""
-    
-    return prompt
-
-
-async def _generate_with_ai(prompt: str) -> str:
-    """Generate content using available AI service."""
-    
-    messages = [
-        {"role": "system", "content": "You are a professional marketing copywriter who creates engaging, conversion-focused content."},
-        {"role": "user", "content": prompt},
-    ]
-    
-    # Try Ollama first
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"http://{settings.OLLAMA_HOST}:{settings.OLLAMA_PORT}/api/chat",
-                json={
-                    "model": settings.OLLAMA_MODEL,
-                    "messages": messages,
-                    "stream": False,
-                },
-                timeout=120.0,
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data.get("message", {}).get("content", "")
-    except Exception:
-        pass
-    
-    # Try OpenAI
-    if settings.OPENAI_API_KEY:
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": settings.OPENAI_MODEL,
-                        "messages": messages,
-                        "max_tokens": 2000,
-                    },
-                    timeout=60.0,
-                )
-                response.raise_for_status()
-                data = response.json()
-                return data["choices"][0]["message"]["content"]
-        except Exception:
-            pass
-    
-    raise Exception("No AI service available")
-
-
-def _parse_content_response(response: str, content_type: str) -> List[ContentVariation]:
-    """Parse AI response into structured content variations."""
-    # Simple parsing - split by common separators
-    parts = response.split("---")
-    if len(parts) == 1:
-        parts = response.split("Variation")
-    if len(parts) == 1:
-        parts = [response]
-    
-    variations = []
-    for part in parts:
-        if not part.strip():
-            continue
-        
-        # Extract hashtags if social post
-        hashtags = None
-        if content_type == "social_post":
-            import re
-            hashtag_matches = re.findall(r'#\w+', part)
-            if hashtag_matches:
-                hashtags = list(set(hashtag_matches))[:5]
-        
-        variations.append(ContentVariation(
-            content=part.strip(),
-            hashtags=hashtags,
-            call_to_action="Learn more" if "cta" not in part.lower() else None,
+    ideas = []
+    for idea in ideas_data.get("ideas", []):
+        ideas.append(ContentIdea(
+            id=f"idea-{uuid4()}",
+            title=idea.get("title", "Untitled"),
+            description=idea.get("description", ""),
+            content_type=idea.get("content_type", "blog"),
+            suggested_platforms=idea.get("suggested_platforms", ["linkedin"]),
+            trending_score=idea.get("trending_score"),
         ))
     
-    return variations[:5]  # Max 5 variations
+    return IdeaGenerateResponse(ideas=ideas)
 
 
-def _parse_ideas_response(response: str, count: int) -> List[ContentIdea]:
-    """Parse AI response into structured content ideas."""
-    # Return placeholder ideas if parsing fails
-    return [
-        ContentIdea(
-            title=f"Content Idea {i+1}",
-            description="AI-generated content idea based on your input.",
-            content_type="social_post",
-            suggested_platforms=["LinkedIn", "Instagram"],
-        )
-        for i in range(min(count, 5))
-    ]
-
-
-def _get_fallback_content(request: ContentGenerateRequest) -> str:
-    """Generate fallback content when AI is unavailable."""
-    fallbacks = {
-        "social_post": f"📢 {request.topic}\n\nDiscover how we're making a difference. Stay tuned for more updates!\n\n#marketing #innovation #growth",
-        "blog": f"# {request.topic}\n\nIntroduction to this important topic...\n\n## Key Points\n\n1. First key insight\n2. Second key insight\n3. Third key insight\n\n## Conclusion\n\nIn conclusion, this topic is essential for...",
-        "email": f"Subject: Exciting News About {request.topic}\n\nHi there,\n\nWe're thrilled to share something special with you...\n\nBest regards,\nThe Team",
-        "ad_copy": f"✨ {request.topic}\n\nTransform your approach today. Limited time offer.\n\n👉 Learn More",
-        "landing_page": f"# {request.topic}\n\n## Transform Your Business\n\nDiscover the power of our solution.\n\n### Why Choose Us?\n\n- Benefit 1\n- Benefit 2\n- Benefit 3\n\n[Get Started →]",
+@router.get("/types")
+async def get_content_types(
+    current_user: User = Depends(get_current_user)
+):
+    """Get available content types and their details."""
+    return {
+        "types": [
+            {
+                "id": "social_post",
+                "name": "Social Media Post",
+                "description": "Short-form content for social platforms",
+                "platforms": ["twitter", "linkedin", "facebook", "instagram"],
+                "ai_tier": "standard",
+                "cost": "FREE",
+            },
+            {
+                "id": "blog",
+                "name": "Blog Article",
+                "description": "Long-form SEO-optimized content",
+                "platforms": ["website", "medium", "linkedin"],
+                "ai_tier": "creative",
+                "cost": "~$0.02-0.05 per article",
+            },
+            {
+                "id": "email",
+                "name": "Email Newsletter",
+                "description": "Email marketing content with subject lines",
+                "platforms": ["email"],
+                "ai_tier": "standard",
+                "cost": "FREE",
+            },
+            {
+                "id": "ad_copy",
+                "name": "Ad Copy",
+                "description": "Advertising copy for paid campaigns",
+                "platforms": ["google", "meta", "linkedin", "tiktok"],
+                "ai_tier": "creative",
+                "cost": "~$0.01-0.03 per set",
+            },
+            {
+                "id": "landing_page",
+                "name": "Landing Page Copy",
+                "description": "Conversion-focused website copy",
+                "platforms": ["website"],
+                "ai_tier": "creative",
+                "cost": "~$0.03-0.05 per page",
+            },
+        ]
     }
-    return fallbacks.get(request.content_type, f"Content about {request.topic}")
-
