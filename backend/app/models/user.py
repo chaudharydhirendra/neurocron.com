@@ -4,8 +4,9 @@ User authentication and profile
 """
 
 import uuid
-from typing import Optional, List
+from typing import Optional, List, Any
 from sqlalchemy import String, Boolean, Enum as SQLEnum
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
@@ -65,7 +66,8 @@ class User(Base):
     )
     
     # Preferences (JSON)
-    preferences: Mapped[Optional[dict]] = mapped_column(
+    preferences: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        JSONB,
         default=None,
         nullable=True,
     )
