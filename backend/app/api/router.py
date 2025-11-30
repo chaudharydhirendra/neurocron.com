@@ -5,7 +5,7 @@ Main router that includes all API endpoints
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, organizations, campaigns, copilot, webhooks, dashboard, content, audit
+from app.api.v1 import auth, organizations, campaigns, copilot, webhooks, dashboard, content, audit, integrations
 
 api_router = APIRouter()
 
@@ -63,5 +63,12 @@ api_router.include_router(
     audit.router,
     prefix="/audit",
     tags=["AuditX"]
+)
+
+# Integrations endpoints
+api_router.include_router(
+    integrations.router,
+    prefix="/integrations",
+    tags=["Integrations"]
 )
 
