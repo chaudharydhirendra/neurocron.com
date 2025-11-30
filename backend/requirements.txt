@@ -81,3 +81,4 @@ beautifulsoup4==4.12.3
 playwright==1.41.2
 lxml==5.1.0
 
+stripe==7.0.0

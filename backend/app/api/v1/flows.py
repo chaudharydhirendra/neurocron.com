@@ -14,6 +14,7 @@ from app.core.deps import get_db
 from app.api.v1.auth import get_current_user
 from app.models.organization import OrganizationMember
 from app.models.user import User
+from app.models.flow import Flow, FlowExecution, FlowStatus
 
 router = APIRouter()
 
@@ -203,19 +204,30 @@ async def create_flow(
             detail="Not a member of this organization"
         )
     
-    # For now, return mock response (DB model integration pending)
-    from datetime import datetime
-    return FlowResponse(
-        id=str(UUID(int=0)),
+    # Create flow
+    flow = Flow(
+        organization_id=org_id,
         name=flow_in.name,
         description=flow_in.description,
-        status="draft",
         nodes=[n.model_dump() for n in flow_in.nodes],
         edges=[e.model_dump() for e in flow_in.edges],
-        total_executions=0,
-        successful_executions=0,
-        created_at=datetime.utcnow().isoformat(),
-        updated_at=datetime.utcnow().isoformat(),
+        status=FlowStatus.DRAFT,
+    )
+    db.add(flow)
+    await db.commit()
+    await db.refresh(flow)
+    
+    return FlowResponse(
+        id=str(flow.id),
+        name=flow.name,
+        description=flow.description,
+        status=flow.status.value if hasattr(flow.status, 'value') else flow.status,
+        nodes=flow.nodes or [],
+        edges=flow.edges or [],
+        total_executions=flow.total_executions,
+        successful_executions=flow.successful_executions,
+        created_at=flow.created_at.isoformat() if flow.created_at else "",
+        updated_at=flow.updated_at.isoformat() if flow.updated_at else "",
     )
 
 
@@ -241,8 +253,188 @@ async def list_flows(
             detail="Not a member of this organization"
         )
     
-    # Return empty list for now (DB integration pending)
-    return {"flows": [], "total": 0}
+    # Build query
+    query = select(Flow).where(Flow.organization_id == org_id)
+    if status_filter:
+        query = query.where(Flow.status == status_filter)
+    query = query.offset(skip).limit(limit).order_by(Flow.created_at.desc())
+    
+    result = await db.execute(query)
+    flows = result.scalars().all()
+    
+    # Count total
+    count_result = await db.execute(
+        select(func.count(Flow.id)).where(Flow.organization_id == org_id)
+    )
+    total = count_result.scalar() or 0
+    
+    return {
+        "flows": [
+            {
+                "id": str(f.id),
+                "name": f.name,
+                "description": f.description,
+                "status": f.status.value if hasattr(f.status, 'value') else f.status,
+                "nodes": f.nodes or [],
+                "edges": f.edges or [],
+                "total_executions": f.total_executions,
+                "successful_executions": f.successful_executions,
+                "created_at": f.created_at.isoformat() if f.created_at else None,
+                "updated_at": f.updated_at.isoformat() if f.updated_at else None,
+            }
+            for f in flows
+        ],
+        "total": total
+    }
+
+
+@router.get("/{flow_id}")
+async def get_flow(
+    flow_id: UUID,
+    org_id: UUID = Query(..., description="Organization ID"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get a specific flow."""
+    # Verify membership
+    result = await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.organization_id == org_id)
+        .where(OrganizationMember.user_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this organization"
+        )
+    
+    # Fetch flow
+    result = await db.execute(
+        select(Flow)
+        .where(Flow.id == flow_id)
+        .where(Flow.organization_id == org_id)
+    )
+    flow = result.scalar_one_or_none()
+    
+    if not flow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Flow not found"
+        )
+    
+    return {
+        "id": str(flow.id),
+        "name": flow.name,
+        "description": flow.description,
+        "status": flow.status.value if hasattr(flow.status, 'value') else flow.status,
+        "nodes": flow.nodes or [],
+        "edges": flow.edges or [],
+        "total_executions": flow.total_executions,
+        "successful_executions": flow.successful_executions,
+        "created_at": flow.created_at.isoformat() if flow.created_at else None,
+        "updated_at": flow.updated_at.isoformat() if flow.updated_at else None,
+    }
+
+
+@router.put("/{flow_id}")
+async def update_flow(
+    flow_id: UUID,
+    flow_update: FlowUpdate,
+    org_id: UUID = Query(..., description="Organization ID"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update a flow."""
+    # Verify membership
+    result = await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.organization_id == org_id)
+        .where(OrganizationMember.user_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this organization"
+        )
+    
+    # Fetch flow
+    result = await db.execute(
+        select(Flow)
+        .where(Flow.id == flow_id)
+        .where(Flow.organization_id == org_id)
+    )
+    flow = result.scalar_one_or_none()
+    
+    if not flow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Flow not found"
+        )
+    
+    # Update fields
+    if flow_update.name is not None:
+        flow.name = flow_update.name
+    if flow_update.description is not None:
+        flow.description = flow_update.description
+    if flow_update.nodes is not None:
+        flow.nodes = [n.model_dump() for n in flow_update.nodes]
+    if flow_update.edges is not None:
+        flow.edges = [e.model_dump() for e in flow_update.edges]
+    if flow_update.status is not None:
+        flow.status = flow_update.status
+    
+    await db.commit()
+    await db.refresh(flow)
+    
+    return {
+        "id": str(flow.id),
+        "name": flow.name,
+        "description": flow.description,
+        "status": flow.status.value if hasattr(flow.status, 'value') else flow.status,
+        "nodes": flow.nodes or [],
+        "edges": flow.edges or [],
+        "message": "Flow updated successfully",
+    }
+
+
+@router.delete("/{flow_id}")
+async def delete_flow(
+    flow_id: UUID,
+    org_id: UUID = Query(..., description="Organization ID"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a flow."""
+    # Verify membership
+    result = await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.organization_id == org_id)
+        .where(OrganizationMember.user_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this organization"
+        )
+    
+    # Fetch and delete flow
+    result = await db.execute(
+        select(Flow)
+        .where(Flow.id == flow_id)
+        .where(Flow.organization_id == org_id)
+    )
+    flow = result.scalar_one_or_none()
+    
+    if not flow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Flow not found"
+        )
+    
+    await db.delete(flow)
+    await db.commit()
+    
+    return {"message": "Flow deleted successfully"}
 
 
 @router.get("/node-types")
@@ -328,4 +520,3 @@ async def get_node_types(
             },
         ]
     }
-

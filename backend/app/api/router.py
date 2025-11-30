@@ -5,7 +5,7 @@ Main router that includes all API endpoints
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, organizations, campaigns, copilot, webhooks, dashboard, content, audit, integrations, flows, launchpad, personas, strategy, ads, channels, competitors
+from app.api.v1 import auth, organizations, campaigns, copilot, webhooks, dashboard, content, audit, integrations, flows, launchpad, personas, strategy, ads, channels, competitors, billing
 
 api_router = APIRouter()
 
@@ -119,5 +119,12 @@ api_router.include_router(
     competitors.router,
     prefix="/intelligence",
     tags=["BattleStation", "TrendRadar", "CrisisShield"]
+)
+
+# Billing endpoints
+api_router.include_router(
+    billing.router,
+    prefix="/billing",
+    tags=["Billing"]
 )
 

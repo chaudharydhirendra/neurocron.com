@@ -43,6 +43,7 @@ const navigation = [
   { name: "Inbox", href: "/inbox", icon: Inbox },
   { name: "Intelligence", href: "/intelligence", icon: Swords },
   { name: "Audit", href: "/audit", icon: Shield },
+  { name: "Billing", href: "/billing", icon: Target },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 

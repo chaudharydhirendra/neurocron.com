@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from datetime import datetime, timedelta
 import random
 
@@ -16,6 +16,9 @@ from app.core.deps import get_db
 from app.api.v1.auth import get_current_user
 from app.models.organization import OrganizationMember
 from app.models.user import User
+from app.models.intelligence import (
+    Competitor, CompetitorInsight, Trend, BrandMention, CrisisEvent
+)
 
 router = APIRouter()
 
@@ -28,27 +31,6 @@ class CompetitorCreate(BaseModel):
     description: Optional[str] = None
 
 
-class Competitor(BaseModel):
-    id: str
-    name: str
-    website: str
-    description: Optional[str]
-    tracking_since: str
-    health_score: int  # 0-100
-    threat_level: str  # low, medium, high
-
-
-class CompetitorInsight(BaseModel):
-    id: str
-    competitor_id: str
-    type: str  # new_product, pricing_change, campaign, content, social
-    title: str
-    description: str
-    detected_at: str
-    impact: str  # positive, neutral, negative
-    action_recommended: Optional[str]
-
-
 @router.post("/competitors")
 async def add_competitor(
     competitor: CompetitorCreate,
@@ -57,12 +39,37 @@ async def add_competitor(
     current_user: User = Depends(get_current_user)
 ):
     """Add a competitor to track."""
+    # Verify membership
+    result = await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.organization_id == org_id)
+        .where(OrganizationMember.user_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this organization"
+        )
+    
+    # Create competitor
+    new_competitor = Competitor(
+        organization_id=org_id,
+        name=competitor.name,
+        website=competitor.website,
+        description=competitor.description,
+        health_score=50,  # Initial score
+        threat_level="medium",
+    )
+    db.add(new_competitor)
+    await db.commit()
+    await db.refresh(new_competitor)
+    
     return {
-        "id": "comp-new",
-        "name": competitor.name,
-        "website": competitor.website,
-        "description": competitor.description,
-        "tracking_since": datetime.utcnow().isoformat(),
+        "id": str(new_competitor.id),
+        "name": new_competitor.name,
+        "website": new_competitor.website,
+        "description": new_competitor.description,
+        "tracking_since": new_competitor.created_at.isoformat() if new_competitor.created_at else None,
         "message": "Competitor added. Initial analysis will complete in 24 hours.",
     }
 
@@ -86,118 +93,192 @@ async def list_competitors(
             detail="Not a member of this organization"
         )
     
+    # Fetch competitors
+    result = await db.execute(
+        select(Competitor)
+        .where(Competitor.organization_id == org_id)
+        .where(Competitor.is_active == True)
+        .order_by(Competitor.created_at.desc())
+    )
+    competitors = result.scalars().all()
+    
+    # If no competitors, return sample data for demo
+    if not competitors:
+        return {
+            "competitors": [
+                {
+                    "id": "comp-demo-1",
+                    "name": "Competitor A",
+                    "website": "https://competitora.com",
+                    "description": "Major player in the market",
+                    "tracking_since": "2024-01-15T00:00:00Z",
+                    "health_score": 82,
+                    "threat_level": "high",
+                    "metrics": {
+                        "website_traffic": "2.5M/mo",
+                        "social_followers": "125K",
+                        "domain_authority": 65,
+                        "ad_spend_estimate": "$50K/mo",
+                    }
+                },
+                {
+                    "id": "comp-demo-2",
+                    "name": "Competitor B",
+                    "website": "https://competitorb.com",
+                    "description": "Fast-growing startup",
+                    "tracking_since": "2024-02-01T00:00:00Z",
+                    "health_score": 68,
+                    "threat_level": "medium",
+                    "metrics": {
+                        "website_traffic": "800K/mo",
+                        "social_followers": "45K",
+                        "domain_authority": 48,
+                        "ad_spend_estimate": "$20K/mo",
+                    }
+                },
+            ]
+        }
+    
     return {
         "competitors": [
             {
-                "id": "comp-1",
-                "name": "Competitor A",
-                "website": "https://competitora.com",
-                "description": "Major player in the market",
-                "tracking_since": "2024-01-15T00:00:00Z",
-                "health_score": 82,
-                "threat_level": "high",
-                "metrics": {
-                    "website_traffic": "2.5M/mo",
-                    "social_followers": "125K",
-                    "domain_authority": 65,
-                    "ad_spend_estimate": "$50K/mo",
+                "id": str(c.id),
+                "name": c.name,
+                "website": c.website,
+                "description": c.description,
+                "tracking_since": c.created_at.isoformat() if c.created_at else None,
+                "health_score": c.health_score,
+                "threat_level": c.threat_level,
+                "metrics": c.metrics or {
+                    "website_traffic": c.website_traffic or "N/A",
+                    "social_followers": c.social_followers or "N/A",
+                    "domain_authority": c.domain_authority,
+                    "ad_spend_estimate": c.ad_spend_estimate or "N/A",
                 }
-            },
-            {
-                "id": "comp-2",
-                "name": "Competitor B",
-                "website": "https://competitorb.com",
-                "description": "Fast-growing startup",
-                "tracking_since": "2024-02-01T00:00:00Z",
-                "health_score": 68,
-                "threat_level": "medium",
-                "metrics": {
-                    "website_traffic": "800K/mo",
-                    "social_followers": "45K",
-                    "domain_authority": 48,
-                    "ad_spend_estimate": "$20K/mo",
-                }
-            },
-            {
-                "id": "comp-3",
-                "name": "Competitor C",
-                "website": "https://competitorc.com",
-                "description": "Enterprise-focused competitor",
-                "tracking_since": "2024-02-15T00:00:00Z",
-                "health_score": 75,
-                "threat_level": "medium",
-                "metrics": {
-                    "website_traffic": "1.2M/mo",
-                    "social_followers": "32K",
-                    "domain_authority": 58,
-                    "ad_spend_estimate": "$35K/mo",
-                }
-            },
+            }
+            for c in competitors
         ]
     }
+
+
+@router.delete("/competitors/{competitor_id}")
+async def delete_competitor(
+    competitor_id: UUID,
+    org_id: UUID = Query(..., description="Organization ID"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Stop tracking a competitor."""
+    # Verify membership
+    result = await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.organization_id == org_id)
+        .where(OrganizationMember.user_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this organization"
+        )
+    
+    # Soft delete
+    result = await db.execute(
+        select(Competitor)
+        .where(Competitor.id == competitor_id)
+        .where(Competitor.organization_id == org_id)
+    )
+    competitor = result.scalar_one_or_none()
+    
+    if not competitor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Competitor not found"
+        )
+    
+    competitor.is_active = False
+    await db.commit()
+    
+    return {"message": "Competitor tracking stopped"}
 
 
 @router.get("/competitors/insights")
 async def get_competitor_insights(
     org_id: UUID = Query(..., description="Organization ID"),
-    competitor_id: Optional[str] = None,
+    competitor_id: Optional[UUID] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get competitive intelligence insights."""
-    now = datetime.utcnow()
+    # Verify membership
+    result = await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.organization_id == org_id)
+        .where(OrganizationMember.user_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this organization"
+        )
     
-    insights = [
-        {
-            "id": "insight-1",
-            "competitor_id": "comp-1",
-            "competitor_name": "Competitor A",
-            "type": "pricing_change",
-            "title": "Price reduction detected",
-            "description": "Competitor A reduced their Pro plan pricing by 15%. This could impact our mid-market positioning.",
-            "detected_at": (now - timedelta(hours=6)).isoformat(),
-            "impact": "negative",
-            "action_recommended": "Consider promotional offer or highlight value differentiators",
-        },
-        {
-            "id": "insight-2",
-            "competitor_id": "comp-2",
-            "competitor_name": "Competitor B",
-            "type": "new_product",
-            "title": "New feature launch",
-            "description": "Competitor B launched an AI-powered analytics feature similar to our InsightCortex.",
-            "detected_at": (now - timedelta(days=1)).isoformat(),
-            "impact": "neutral",
-            "action_recommended": "Accelerate roadmap for advanced analytics features",
-        },
-        {
-            "id": "insight-3",
-            "competitor_id": "comp-1",
-            "competitor_name": "Competitor A",
-            "type": "campaign",
-            "title": "Major ad campaign detected",
-            "description": "Competitor A launched a major Google Ads campaign targeting 'marketing automation' keywords.",
-            "detected_at": (now - timedelta(days=2)).isoformat(),
-            "impact": "negative",
-            "action_recommended": "Increase bid on defensive keywords, consider counter-campaign",
-        },
-        {
-            "id": "insight-4",
-            "competitor_id": "comp-3",
-            "competitor_name": "Competitor C",
-            "type": "content",
-            "title": "Viral content piece",
-            "description": "Competitor C's blog post 'Future of AI Marketing' got 50K+ shares on LinkedIn.",
-            "detected_at": (now - timedelta(days=3)).isoformat(),
-            "impact": "neutral",
-            "action_recommended": "Create response content with unique perspective",
-        },
-    ]
-    
+    # Build query for insights
+    query = select(CompetitorInsight).join(Competitor)
+    query = query.where(Competitor.organization_id == org_id)
     if competitor_id:
-        insights = [i for i in insights if i["competitor_id"] == competitor_id]
+        query = query.where(CompetitorInsight.competitor_id == competitor_id)
+    query = query.order_by(CompetitorInsight.created_at.desc()).limit(20)
     
-    return {"insights": insights, "total": len(insights)}
+    result = await db.execute(query)
+    insights = result.scalars().all()
+    
+    # If no insights, return sample data for demo
+    now = datetime.utcnow()
+    if not insights:
+        return {
+            "insights": [
+                {
+                    "id": "insight-1",
+                    "competitor_id": "comp-1",
+                    "competitor_name": "Competitor A",
+                    "type": "pricing_change",
+                    "title": "Price reduction detected",
+                    "description": "Competitor A reduced their Pro plan pricing by 15%. This could impact our mid-market positioning.",
+                    "detected_at": (now - timedelta(hours=6)).isoformat(),
+                    "impact": "negative",
+                    "action_recommended": "Consider promotional offer or highlight value differentiators",
+                },
+                {
+                    "id": "insight-2",
+                    "competitor_id": "comp-2",
+                    "competitor_name": "Competitor B",
+                    "type": "new_product",
+                    "title": "New feature launch",
+                    "description": "Competitor B launched an AI-powered analytics feature similar to our InsightCortex.",
+                    "detected_at": (now - timedelta(days=1)).isoformat(),
+                    "impact": "neutral",
+                    "action_recommended": "Accelerate roadmap for advanced analytics features",
+                },
+            ],
+            "total": 2
+        }
+    
+    return {
+        "insights": [
+            {
+                "id": str(i.id),
+                "competitor_id": str(i.competitor_id),
+                "competitor_name": i.competitor.name if i.competitor else "Unknown",
+                "type": i.insight_type,
+                "title": i.title,
+                "description": i.description,
+                "detected_at": i.created_at.isoformat() if i.created_at else None,
+                "impact": i.impact,
+                "action_recommended": i.action_recommended,
+            }
+            for i in insights
+        ],
+        "total": len(insights)
+    }
 
 
 # --- TrendRadar: Real-time Trend Monitoring ---
@@ -210,81 +291,110 @@ async def get_trends(
     current_user: User = Depends(get_current_user)
 ):
     """Get trending topics relevant to your industry."""
+    # Verify membership
+    result = await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.organization_id == org_id)
+        .where(OrganizationMember.user_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this organization"
+        )
+    
+    # Fetch trends from database
+    query = select(Trend).where(Trend.organization_id == org_id)
+    if category:
+        query = query.where(Trend.category == category)
+    query = query.order_by(Trend.relevance_score.desc()).limit(20)
+    
+    result = await db.execute(query)
+    trends = result.scalars().all()
+    
+    # If no trends, return sample data
+    if not trends:
+        return {
+            "trends": [
+                {
+                    "id": "trend-1",
+                    "topic": "AI Marketing Automation",
+                    "category": "technology",
+                    "velocity": "rising",
+                    "growth_24h": 45,
+                    "volume": 125000,
+                    "sentiment": "positive",
+                    "relevance_score": 95,
+                    "source_breakdown": {
+                        "twitter": 45,
+                        "linkedin": 30,
+                        "news": 15,
+                        "reddit": 10,
+                    },
+                    "opportunity": "High opportunity for thought leadership content",
+                },
+                {
+                    "id": "trend-2",
+                    "topic": "Marketing Budget Optimization",
+                    "category": "industry",
+                    "velocity": "stable",
+                    "growth_24h": 12,
+                    "volume": 85000,
+                    "sentiment": "neutral",
+                    "relevance_score": 78,
+                    "source_breakdown": {
+                        "news": 50,
+                        "linkedin": 30,
+                        "twitter": 15,
+                        "reddit": 5,
+                    },
+                    "opportunity": "Position as cost-effective solution",
+                },
+                {
+                    "id": "trend-3",
+                    "topic": "Privacy-First Marketing",
+                    "category": "compliance",
+                    "velocity": "rising",
+                    "growth_24h": 28,
+                    "volume": 65000,
+                    "sentiment": "neutral",
+                    "relevance_score": 82,
+                    "source_breakdown": {
+                        "news": 40,
+                        "linkedin": 35,
+                        "twitter": 20,
+                        "reddit": 5,
+                    },
+                    "opportunity": "Highlight privacy features and compliance",
+                },
+            ],
+            "summary": {
+                "total_monitored": 156,
+                "high_relevance": 12,
+                "opportunities_identified": 8,
+            }
+        }
+    
     return {
         "trends": [
             {
-                "id": "trend-1",
-                "topic": "AI Marketing Automation",
-                "category": "technology",
-                "velocity": "rising",
-                "growth_24h": 45,
-                "volume": 125000,
-                "sentiment": "positive",
-                "relevance_score": 95,
-                "source_breakdown": {
-                    "twitter": 45,
-                    "linkedin": 30,
-                    "news": 15,
-                    "reddit": 10,
-                },
-                "opportunity": "High opportunity for thought leadership content",
-            },
-            {
-                "id": "trend-2",
-                "topic": "Marketing Budget Cuts 2024",
-                "category": "industry",
-                "velocity": "stable",
-                "growth_24h": 12,
-                "volume": 85000,
-                "sentiment": "negative",
-                "relevance_score": 78,
-                "source_breakdown": {
-                    "news": 50,
-                    "linkedin": 30,
-                    "twitter": 15,
-                    "reddit": 5,
-                },
-                "opportunity": "Position as cost-effective solution",
-            },
-            {
-                "id": "trend-3",
-                "topic": "Privacy-First Marketing",
-                "category": "compliance",
-                "velocity": "rising",
-                "growth_24h": 28,
-                "volume": 65000,
-                "sentiment": "neutral",
-                "relevance_score": 82,
-                "source_breakdown": {
-                    "news": 40,
-                    "linkedin": 35,
-                    "twitter": 20,
-                    "reddit": 5,
-                },
-                "opportunity": "Highlight privacy features and compliance",
-            },
-            {
-                "id": "trend-4",
-                "topic": "Short-Form Video Marketing",
-                "category": "tactics",
-                "velocity": "viral",
-                "growth_24h": 120,
-                "volume": 450000,
-                "sentiment": "positive",
-                "relevance_score": 70,
-                "source_breakdown": {
-                    "tiktok": 40,
-                    "instagram": 35,
-                    "twitter": 15,
-                    "youtube": 10,
-                },
-                "opportunity": "Create TikTok/Reels content strategy",
-            },
+                "id": str(t.id),
+                "topic": t.topic,
+                "category": t.category,
+                "velocity": t.velocity,
+                "growth_24h": t.growth_24h,
+                "volume": t.volume,
+                "sentiment": t.sentiment,
+                "relevance_score": t.relevance_score,
+                "source_breakdown": t.source_breakdown or {},
+                "opportunity": t.opportunity,
+            }
+            for t in trends
         ],
         "summary": {
-            "total_monitored": 156,
-            "high_relevance": 12,
-            "opportunities_identified": 8,
+            "total_monitored": len(trends),
+            "high_relevance": len([t for t in trends if t.relevance_score >= 80]),
+            "opportunities_identified": len([t for t in trends if t.opportunity]),
         }
     }
 
@@ -332,6 +442,23 @@ async def get_brand_health(
     current_user: User = Depends(get_current_user)
 ):
     """Get brand health score and metrics."""
+    # Verify membership
+    result = await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.organization_id == org_id)
+        .where(OrganizationMember.user_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this organization"
+        )
+    
+    # Count mentions by sentiment
+    now = datetime.utcnow()
+    day_ago = now - timedelta(days=1)
+    
+    # In production, would calculate from actual mentions
     return {
         "health_score": 85,
         "trend": "stable",
@@ -365,51 +492,94 @@ async def get_brand_mentions(
     current_user: User = Depends(get_current_user)
 ):
     """Get brand mentions from across the web."""
-    now = datetime.utcnow()
+    # Verify membership
+    result = await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.organization_id == org_id)
+        .where(OrganizationMember.user_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this organization"
+        )
     
-    mentions = [
-        {
-            "id": "mention-1",
-            "source": "twitter",
-            "author": "@marketing_guru",
-            "content": "Just tried @NeuroCron for our agency - the AI features are incredible! Saved us 10 hours last week alone. 🚀",
-            "sentiment": "positive",
-            "reach": 15000,
-            "engagement": 342,
-            "timestamp": (now - timedelta(hours=2)).isoformat(),
-            "url": "https://twitter.com/...",
-        },
-        {
-            "id": "mention-2",
-            "source": "linkedin",
-            "author": "Sarah Marketing VP",
-            "content": "Evaluating marketing automation tools. NeuroCron looks promising but waiting to see case studies from enterprise customers.",
-            "sentiment": "neutral",
-            "reach": 8500,
-            "engagement": 45,
-            "timestamp": (now - timedelta(hours=5)).isoformat(),
-            "url": "https://linkedin.com/...",
-        },
-        {
-            "id": "mention-3",
-            "source": "reddit",
-            "author": "u/startup_marketer",
-            "content": "Anyone else having issues with NeuroCron's API? Getting timeout errors when trying to sync campaigns.",
-            "sentiment": "negative",
-            "reach": 2500,
-            "engagement": 28,
-            "timestamp": (now - timedelta(hours=8)).isoformat(),
-            "url": "https://reddit.com/...",
-            "requires_action": True,
-        },
-    ]
-    
+    # Build query
+    query = select(BrandMention).where(BrandMention.organization_id == org_id)
     if sentiment:
-        mentions = [m for m in mentions if m["sentiment"] == sentiment]
+        query = query.where(BrandMention.sentiment == sentiment)
     if source:
-        mentions = [m for m in mentions if m["source"] == source]
+        query = query.where(BrandMention.source == source)
+    query = query.order_by(BrandMention.created_at.desc()).limit(50)
     
-    return {"mentions": mentions, "total": len(mentions)}
+    result = await db.execute(query)
+    mentions = result.scalars().all()
+    
+    # If no mentions, return sample data
+    now = datetime.utcnow()
+    if not mentions:
+        sample_mentions = [
+            {
+                "id": "mention-1",
+                "source": "twitter",
+                "author": "@marketing_guru",
+                "content": "Just tried @NeuroCron for our agency - the AI features are incredible! Saved us 10 hours last week alone. 🚀",
+                "sentiment": "positive",
+                "reach": 15000,
+                "engagement": 342,
+                "timestamp": (now - timedelta(hours=2)).isoformat(),
+                "url": "https://twitter.com/...",
+            },
+            {
+                "id": "mention-2",
+                "source": "linkedin",
+                "author": "Sarah Marketing VP",
+                "content": "Evaluating marketing automation tools. NeuroCron looks promising but waiting to see case studies from enterprise customers.",
+                "sentiment": "neutral",
+                "reach": 8500,
+                "engagement": 45,
+                "timestamp": (now - timedelta(hours=5)).isoformat(),
+                "url": "https://linkedin.com/...",
+            },
+            {
+                "id": "mention-3",
+                "source": "reddit",
+                "author": "u/startup_marketer",
+                "content": "Anyone else having issues with NeuroCron's API? Getting timeout errors when trying to sync campaigns.",
+                "sentiment": "negative",
+                "reach": 2500,
+                "engagement": 28,
+                "timestamp": (now - timedelta(hours=8)).isoformat(),
+                "url": "https://reddit.com/...",
+                "requires_action": True,
+            },
+        ]
+        
+        if sentiment:
+            sample_mentions = [m for m in sample_mentions if m["sentiment"] == sentiment]
+        if source:
+            sample_mentions = [m for m in sample_mentions if m["source"] == source]
+        
+        return {"mentions": sample_mentions, "total": len(sample_mentions)}
+    
+    return {
+        "mentions": [
+            {
+                "id": str(m.id),
+                "source": m.source,
+                "author": m.author_name or m.author_handle,
+                "content": m.content,
+                "sentiment": m.sentiment,
+                "reach": m.reach,
+                "engagement": m.engagement,
+                "timestamp": m.created_at.isoformat() if m.created_at else None,
+                "url": m.source_url,
+                "requires_action": m.requires_action,
+            }
+            for m in mentions
+        ],
+        "total": len(mentions)
+    }
 
 
 @router.get("/brand/crises")
@@ -419,8 +589,40 @@ async def get_active_crises(
     current_user: User = Depends(get_current_user)
 ):
     """Get active brand crises or potential issues."""
+    # Verify membership
+    result = await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.organization_id == org_id)
+        .where(OrganizationMember.user_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this organization"
+        )
+    
+    # Fetch crises
+    result = await db.execute(
+        select(CrisisEvent)
+        .where(CrisisEvent.organization_id == org_id)
+        .where(CrisisEvent.status == "active")
+        .order_by(CrisisEvent.created_at.desc())
+    )
+    crises = result.scalars().all()
+    
     return {
-        "active_crises": [],
+        "active_crises": [
+            {
+                "id": str(c.id),
+                "severity": c.severity,
+                "title": c.title,
+                "description": c.description,
+                "mentions_count": c.mentions_count,
+                "sentiment_trend": c.sentiment_trend,
+                "recommended_actions": c.recommended_actions or [],
+            }
+            for c in crises
+        ],
         "potential_issues": [
             {
                 "id": "issue-1",
@@ -435,15 +637,8 @@ async def get_active_crises(
                     "Consider proactive communication if issue persists",
                 ],
             }
-        ],
-        "resolved_recently": [
-            {
-                "id": "crisis-1",
-                "title": "Pricing Page Error",
-                "resolved_at": (datetime.utcnow() - timedelta(days=3)).isoformat(),
-                "resolution": "Technical issue fixed within 2 hours of detection",
-            }
-        ],
+        ] if not crises else [],
+        "resolved_recently": [],
     }
 
 
@@ -463,4 +658,3 @@ async def queue_crisis_response(
         "estimated_publish": "Within 5 minutes",
         "message": "Response queued for review and publishing",
     }
-
