@@ -30,7 +30,9 @@ import {
   HeartHandshake,
   Share2,
   FlaskConical,
-  Images,
+  ImageIcon,
+  FolderKanban,
+  GitMerge,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ProtectedRoute } from "@/components/protected-route";
@@ -58,7 +60,9 @@ const navigation = [
   { name: "Retention", href: "/retention", icon: HeartHandshake },
   { name: "Viral", href: "/viral", icon: Share2 },
   { name: "Simulator", href: "/simulator", icon: FlaskConical },
-  { name: "Assets", href: "/assets", icon: Images },
+  { name: "Assets", href: "/assets", icon: ImageIcon },
+  { name: "Projects", href: "/projects", icon: FolderKanban },
+  { name: "Attribution", href: "/attribution", icon: GitMerge },
   { name: "Team", href: "/team", icon: Users },
   { name: "Billing", href: "/billing", icon: CreditCard },
   { name: "Profile", href: "/profile", icon: User },

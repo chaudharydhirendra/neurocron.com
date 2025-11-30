@@ -27,6 +27,10 @@ from app.models.retention import ChurnPrediction, ChurnRiskLevel, RetentionCampa
 from app.models.referral import ReferralProgram, ReferralProgramStatus, Referral, Contest, ContestEntry, GamificationBadge, CustomerBadge, Leaderboard
 from app.models.simulation import Simulation, SimulationStatus, SimulationType, SimulationTemplate, PredictionModel, ForecastScenario
 from app.models.asset import Asset, AssetType, AssetFolder, AssetTag, AssetTagMapping, BrandGuideline
+from app.models.project import Project, ProjectStatus, Task, TaskStatus, TaskPriority, TaskComment, Milestone, TimeEntry
+from app.models.attribution import RevenueEvent, TouchpointRecord, AttributionResult, AttributionModel, ChannelPerformance, CampaignROI
+from app.models.localization import TranslationProject, TranslationItem, Translation, LocaleSettings
+from app.models.agency import AgencyClient, WhiteLabelConfig, ClientReport, ClientApproval
 
 __all__ = [
     "Base",
@@ -109,4 +113,30 @@ __all__ = [
     "AssetTag",
     "AssetTagMapping",
     "BrandGuideline",
+    # ProjectHub
+    "Project",
+    "ProjectStatus",
+    "Task",
+    "TaskStatus",
+    "TaskPriority",
+    "TaskComment",
+    "Milestone",
+    "TimeEntry",
+    # RevenueLink
+    "RevenueEvent",
+    "TouchpointRecord",
+    "AttributionResult",
+    "AttributionModel",
+    "ChannelPerformance",
+    "CampaignROI",
+    # GlobalReach
+    "TranslationProject",
+    "TranslationItem",
+    "Translation",
+    "LocaleSettings",
+    # ClientSync
+    "AgencyClient",
+    "WhiteLabelConfig",
+    "ClientReport",
+    "ClientApproval",
 ]

@@ -5,7 +5,7 @@ Main router that includes all API endpoints
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, organizations, campaigns, copilot, webhooks, dashboard, content, audit, integrations, flows, launchpad, personas, strategy, ads, channels, competitors, billing, websocket, notifications, teams, customer_dna, behavior, retention, viral, simulator, assets
+from app.api.v1 import auth, organizations, campaigns, copilot, webhooks, dashboard, content, audit, integrations, flows, launchpad, personas, strategy, ads, channels, competitors, billing, websocket, notifications, teams, customer_dna, behavior, retention, viral, simulator, assets, projects, attribution, localization, agency
 
 api_router = APIRouter()
 
@@ -189,5 +189,33 @@ api_router.include_router(
     assets.router,
     prefix="/assets",
     tags=["BrandVault"]
+)
+
+# ProjectHub endpoints
+api_router.include_router(
+    projects.router,
+    prefix="/projects",
+    tags=["ProjectHub"]
+)
+
+# RevenueLink endpoints
+api_router.include_router(
+    attribution.router,
+    prefix="/attribution",
+    tags=["RevenueLink"]
+)
+
+# GlobalReach endpoints
+api_router.include_router(
+    localization.router,
+    prefix="/localization",
+    tags=["GlobalReach"]
+)
+
+# ClientSync endpoints
+api_router.include_router(
+    agency.router,
+    prefix="/agency",
+    tags=["ClientSync"]
 )
 

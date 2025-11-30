@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
-  Images,
+  ImageIcon,
   Upload,
   FolderOpen,
   Tag,
@@ -131,7 +131,7 @@ export default function AssetsPage() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center">
-              <Images className="w-5 h-5 text-white" />
+              <ImageIcon className="w-5 h-5 text-white" />
             </div>
             BrandVault
           </h1>
@@ -148,7 +148,7 @@ export default function AssetsPage() {
       {/* Tabs */}
       <div className="flex gap-2 border-b border-white/10 pb-2">
         {[
-          { id: "assets", label: "Assets", icon: Images },
+          { id: "assets", label: "Assets", icon: ImageIcon },
           { id: "folders", label: "Folders", icon: FolderOpen },
           { id: "brand", label: "Brand Guide", icon: Palette },
         ].map((tab) => (
@@ -228,7 +228,7 @@ export default function AssetsPage() {
             </div>
           ) : assets.length === 0 ? (
             <div className="card p-12 text-center">
-              <Images className="w-16 h-16 mx-auto mb-4 text-white/20" />
+              <ImageIcon className="w-16 h-16 mx-auto mb-4 text-white/20" />
               <h3 className="text-xl font-semibold mb-2">No assets yet</h3>
               <p className="text-white/50 mb-6">Upload your first asset to get started</p>
               <button className="btn-primary">
@@ -394,10 +394,10 @@ export default function AssetsPage() {
             <h3 className="text-lg font-semibold mb-4">Logos</h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="aspect-square bg-white/5 rounded-lg flex items-center justify-center">
-                <Images className="w-12 h-12 text-white/20" />
+                <ImageIcon className="w-12 h-12 text-white/20" />
               </div>
               <div className="aspect-square bg-black rounded-lg flex items-center justify-center">
-                <Images className="w-12 h-12 text-white/20" />
+                <ImageIcon className="w-12 h-12 text-white/20" />
               </div>
             </div>
             <button className="btn-secondary w-full mt-4">Upload Logo</button>
