@@ -176,3 +176,108 @@ async def clear_history(
     """
     return {"message": "History cleared"}
 
+
+class ActionExecute(BaseModel):
+    """Execute action request"""
+    action_id: str
+    org_id: Optional[UUID] = None
+
+
+@router.post("/execute-action")
+async def execute_action(
+    action: ActionExecute,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Execute a confirmed action from NeuroCopilot.
+    """
+    # In production, this would validate and execute the action
+    return {
+        "success": True,
+        "action_id": action.action_id,
+        "message": "Action executed successfully",
+        "result": {
+            "redirect": "/dashboard",
+        }
+    }
+
+
+@router.get("/capabilities")
+async def get_capabilities(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get list of NeuroCopilot capabilities and available actions.
+    """
+    return {
+        "capabilities": [
+            {
+                "id": "campaigns",
+                "name": "Campaign Management",
+                "description": "Create, edit, and manage marketing campaigns",
+                "actions": ["CREATE_CAMPAIGN", "EDIT_CAMPAIGN", "ANALYZE_CAMPAIGN"],
+                "example_prompts": [
+                    "Create a new campaign for Black Friday",
+                    "What's my best performing campaign?",
+                    "Pause all underperforming campaigns",
+                ],
+            },
+            {
+                "id": "content",
+                "name": "Content Generation",
+                "description": "Generate all types of marketing content",
+                "actions": ["CREATE_CONTENT", "GENERATE_IDEAS"],
+                "example_prompts": [
+                    "Write 5 social media posts for our product",
+                    "Create a blog article about AI marketing",
+                    "Generate email subject lines for our newsletter",
+                ],
+            },
+            {
+                "id": "audiences",
+                "name": "Audience Intelligence",
+                "description": "Create personas and understand your audience",
+                "actions": ["GENERATE_PERSONA", "ANALYZE_AUDIENCE"],
+                "example_prompts": [
+                    "Create a persona for our target customer",
+                    "What demographics engage most with our content?",
+                    "Segment my audience by behavior",
+                ],
+            },
+            {
+                "id": "analytics",
+                "name": "Performance Analytics",
+                "description": "Analyze and understand your marketing performance",
+                "actions": ["ANALYZE_PERFORMANCE", "GENERATE_REPORT"],
+                "example_prompts": [
+                    "Why did my CTR drop last week?",
+                    "Compare this month to last month",
+                    "What's driving my conversions?",
+                ],
+            },
+            {
+                "id": "automation",
+                "name": "Marketing Automation",
+                "description": "Create and manage automation flows",
+                "actions": ["CREATE_FLOW", "SCHEDULE_POST"],
+                "example_prompts": [
+                    "Create a welcome email sequence",
+                    "Set up abandoned cart recovery",
+                    "Schedule posts for next week",
+                ],
+            },
+            {
+                "id": "strategy",
+                "name": "Strategy & Planning",
+                "description": "Generate strategies and marketing plans",
+                "actions": ["GENERATE_STRATEGY", "RUN_AUDIT"],
+                "example_prompts": [
+                    "Create a 12-month marketing strategy",
+                    "Audit my current marketing setup",
+                    "What should I focus on this quarter?",
+                ],
+            },
+        ]
+    }
+
