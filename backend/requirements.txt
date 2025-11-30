@@ -82,3 +82,4 @@ playwright==1.41.2
 lxml==5.1.0
 
 stripe==7.0.0
+sentry-sdk[fastapi]==1.38.0

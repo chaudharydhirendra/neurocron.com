@@ -3,13 +3,37 @@ NeuroCron - The Autonomous Marketing Brain
 Main FastAPI Application
 """
 
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
 from app.core.config import settings
 from app.api.router import api_router
+
+# Initialize Sentry for error monitoring
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=settings.APP_ENV,
+        release=f"neurocron@{settings.APP_VERSION}",
+        traces_sample_rate=0.1 if settings.APP_ENV == "production" else 1.0,
+        profiles_sample_rate=0.1 if settings.APP_ENV == "production" else 1.0,
+        integrations=[
+            FastApiIntegration(transaction_style="url"),
+            SqlalchemyIntegration(),
+        ],
+        # Filter sensitive data
+        send_default_pii=False,
+        # Don't send traces for health checks
+        traces_sampler=lambda ctx: 0 if ctx.get("transaction_context", {}).get("name", "").startswith("/health") else 0.1,
+    )
+    print("🛡️ Sentry error monitoring enabled")
 
 
 @asynccontextmanager
