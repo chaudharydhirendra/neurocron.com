@@ -76,5 +76,17 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.autocron_tasks.archive_old_data",
         "schedule": crontab(day_of_week=0, hour=3, minute=0),  # Sunday 3 AM
     },
+    
+    # OAuth: Refresh tokens every 15 minutes
+    "oauth-refresh-tokens": {
+        "task": "app.workers.autocron_tasks.refresh_oauth_tokens",
+        "schedule": 900.0,  # Every 15 minutes
+    },
+    
+    # OAuth: Cleanup expired states hourly
+    "oauth-cleanup-states": {
+        "task": "app.workers.autocron_tasks.cleanup_expired_oauth_states",
+        "schedule": crontab(minute=30),  # Every hour at :30
+    },
 }
 

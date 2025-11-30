@@ -31,6 +31,7 @@ from app.models.project import Project, ProjectStatus, Task, TaskStatus, TaskPri
 from app.models.attribution import RevenueEvent, TouchpointRecord, AttributionResult, AttributionModel, ChannelPerformance, CampaignROI
 from app.models.localization import TranslationProject, TranslationItem, Translation, LocaleSettings
 from app.models.agency import AgencyClient, WhiteLabelConfig, ClientReport, ClientApproval
+from app.models.integration import IntegrationToken, OAuthState, PlatformWebhook, PlatformType, IntegrationStatus
 
 __all__ = [
     "Base",
@@ -139,4 +140,10 @@ __all__ = [
     "WhiteLabelConfig",
     "ClientReport",
     "ClientApproval",
+    # Integrations
+    "IntegrationToken",
+    "OAuthState",
+    "PlatformWebhook",
+    "PlatformType",
+    "IntegrationStatus",
 ]

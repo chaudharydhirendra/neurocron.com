@@ -93,6 +93,11 @@ class Organization(Base):
         back_populates="organization",
         lazy="selectin",
     )
+    integrations: Mapped[List["IntegrationToken"]] = relationship(
+        "IntegrationToken",
+        back_populates="organization",
+        lazy="selectin",
+    )
     
     def __repr__(self) -> str:
         return f"<Organization {self.name}>"

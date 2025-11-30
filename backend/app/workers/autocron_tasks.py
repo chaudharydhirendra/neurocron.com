@@ -5,9 +5,21 @@ Autonomous marketing execution engine
 
 from celery import shared_task
 from typing import List, Optional
+from datetime import datetime, timedelta
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
+
+
+def run_async(coro):
+    """Helper to run async functions in sync context."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 @shared_task(name="app.workers.autocron_tasks.execute_scheduled_tasks")
@@ -249,3 +261,128 @@ def execute_flow_step(flow_execution_id: str, step_index: int):
         "step": step_index,
         "completed": True,
     }
+
+
+@shared_task(name="app.workers.autocron_tasks.refresh_oauth_tokens")
+def refresh_oauth_tokens():
+    """
+    Refresh OAuth tokens that are about to expire.
+    
+    Runs every 15 minutes to ensure tokens stay fresh.
+    Tokens are refreshed 5 minutes before expiration.
+    """
+    logger.info("OAuth: Checking for tokens needing refresh...")
+    
+    async def _refresh_tokens():
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession
+        import httpx
+        
+        from app.core.database import async_session
+        from app.models.integration import IntegrationToken, IntegrationStatus
+        from app.api.v1.integrations import PLATFORM_CONFIG, get_platform_credentials
+        
+        refreshed = 0
+        failed = 0
+        
+        async with async_session() as db:
+            # Find tokens expiring in the next 10 minutes
+            threshold = datetime.utcnow() + timedelta(minutes=10)
+            
+            result = await db.execute(
+                select(IntegrationToken)
+                .where(IntegrationToken.expires_at <= threshold)
+                .where(IntegrationToken.status == IntegrationStatus.CONNECTED)
+            )
+            tokens = result.scalars().all()
+            
+            for token in tokens:
+                refresh_token = token.get_refresh_token()
+                if not refresh_token:
+                    logger.warning(f"No refresh token for {token.platform} (org: {token.organization_id})")
+                    continue
+                
+                config = PLATFORM_CONFIG.get(token.platform)
+                if not config:
+                    continue
+                
+                client_id, client_secret = get_platform_credentials(token.platform)
+                if not client_id:
+                    continue
+                
+                try:
+                    async with httpx.AsyncClient() as client:
+                        response = await client.post(
+                            config["token_url"],
+                            data={
+                                "client_id": client_id,
+                                "client_secret": client_secret,
+                                "refresh_token": refresh_token,
+                                "grant_type": "refresh_token",
+                            },
+                            headers={"Accept": "application/json"},
+                            timeout=30.0,
+                        )
+                        
+                        if response.status_code == 200:
+                            tokens_data = response.json()
+                            token.set_access_token(tokens_data.get("access_token", ""))
+                            if tokens_data.get("refresh_token"):
+                                token.set_refresh_token(tokens_data.get("refresh_token"))
+                            
+                            expires_in = tokens_data.get("expires_in")
+                            if expires_in:
+                                token.expires_at = datetime.utcnow() + timedelta(seconds=int(expires_in))
+                            
+                            token.last_refresh_at = datetime.utcnow()
+                            token.error_count = 0
+                            token.last_error = None
+                            refreshed += 1
+                            logger.info(f"Refreshed token for {token.platform}")
+                        else:
+                            token.error_count += 1
+                            token.last_error = f"Refresh failed: {response.status_code}"
+                            if token.error_count >= 3:
+                                token.status = IntegrationStatus.EXPIRED
+                            failed += 1
+                            logger.error(f"Failed to refresh {token.platform}: {response.text}")
+                
+                except Exception as e:
+                    token.error_count += 1
+                    token.last_error = str(e)
+                    failed += 1
+                    logger.error(f"Error refreshing {token.platform}: {e}")
+            
+            await db.commit()
+        
+        return {"refreshed": refreshed, "failed": failed}
+    
+    result = run_async(_refresh_tokens())
+    logger.info(f"OAuth: Refreshed {result['refreshed']} tokens, {result['failed']} failed")
+    return result
+
+
+@shared_task(name="app.workers.autocron_tasks.cleanup_expired_oauth_states")
+def cleanup_expired_oauth_states():
+    """
+    Clean up expired OAuth state records.
+    
+    Runs hourly to remove stale OAuth authorization states.
+    """
+    logger.info("OAuth: Cleaning up expired states...")
+    
+    async def _cleanup():
+        from sqlalchemy import delete
+        from app.core.database import async_session
+        from app.models.integration import OAuthState
+        
+        async with async_session() as db:
+            result = await db.execute(
+                delete(OAuthState).where(OAuthState.expires_at < datetime.utcnow())
+            )
+            await db.commit()
+            return result.rowcount
+    
+    deleted = run_async(_cleanup())
+    logger.info(f"OAuth: Cleaned up {deleted} expired states")
+    return {"deleted": deleted}
