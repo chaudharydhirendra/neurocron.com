@@ -27,6 +27,8 @@ import {
 import { cn } from "@/lib/utils";
 import { ProtectedRoute } from "@/components/protected-route";
 import { useAuth } from "@/lib/auth-context";
+import { NotificationProvider } from "@/lib/notifications";
+import { NotificationBell } from "@/components/notification-bell";
 import { useState } from "react";
 
 const navigation = [
@@ -68,6 +70,7 @@ export default function DashboardLayout({
 
   return (
     <ProtectedRoute>
+      <NotificationProvider>
       <div className="min-h-screen bg-midnight flex">
         {/* Sidebar */}
         <aside className="fixed left-0 top-0 bottom-0 w-64 bg-midnight-100 border-r border-white/5 flex flex-col">
@@ -183,10 +186,7 @@ export default function DashboardLayout({
 
             {/* Actions */}
             <div className="flex items-center gap-4">
-              <button className="relative p-2 rounded-xl hover:bg-white/5 transition-colors">
-                <Bell className="w-5 h-5 text-white/60" />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-electric rounded-full" />
-              </button>
+              <NotificationBell />
               <Link href="/dashboard/campaigns/new" className="btn-primary text-sm py-2">
                 New Campaign
               </Link>
@@ -197,6 +197,7 @@ export default function DashboardLayout({
           <main className="p-6">{children}</main>
         </div>
       </div>
+      </NotificationProvider>
     </ProtectedRoute>
   );
 }

@@ -5,7 +5,7 @@ Main router that includes all API endpoints
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, organizations, campaigns, copilot, webhooks, dashboard, content, audit, integrations, flows, launchpad, personas, strategy, ads, channels, competitors, billing
+from app.api.v1 import auth, organizations, campaigns, copilot, webhooks, dashboard, content, audit, integrations, flows, launchpad, personas, strategy, ads, channels, competitors, billing, websocket, notifications
 
 api_router = APIRouter()
 
@@ -126,5 +126,19 @@ api_router.include_router(
     billing.router,
     prefix="/billing",
     tags=["Billing"]
+)
+
+# WebSocket endpoints
+api_router.include_router(
+    websocket.router,
+    prefix="/ws",
+    tags=["WebSocket"]
+)
+
+# Notifications endpoints
+api_router.include_router(
+    notifications.router,
+    prefix="/notifications",
+    tags=["Notifications"]
 )
 

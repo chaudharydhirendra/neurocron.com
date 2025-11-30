@@ -20,6 +20,7 @@ from app.models.intelligence import (
     CrisisEvent,
 )
 from app.models.billing import Subscription, Invoice, UsageRecord
+from app.models.notification import Notification
 
 __all__ = [
     "Base",
@@ -57,4 +58,6 @@ __all__ = [
     "Subscription",
     "Invoice",
     "UsageRecord",
+    # Notifications
+    "Notification",
 ]
