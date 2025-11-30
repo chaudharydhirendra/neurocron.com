@@ -16,6 +16,13 @@ import {
   Bell,
   Search,
   Sparkles,
+  Target,
+  GitBranch,
+  Rocket,
+  Lightbulb,
+  Inbox,
+  Swords,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ProtectedRoute } from "@/components/protected-route";
@@ -28,7 +35,14 @@ const navigation = [
   { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
   { name: "Content", href: "/content", icon: Folder },
-  { name: "Audit", href: "/audit", icon: Users },
+  { name: "Strategy", href: "/strategy", icon: Lightbulb },
+  { name: "FlowBuilder", href: "/flows", icon: GitBranch },
+  { name: "LaunchPad", href: "/launchpad", icon: Rocket },
+  { name: "Audiences", href: "/audiences", icon: Users },
+  { name: "AdPilot", href: "/ads", icon: Target },
+  { name: "Inbox", href: "/inbox", icon: Inbox },
+  { name: "Intelligence", href: "/intelligence", icon: Swords },
+  { name: "Audit", href: "/audit", icon: Shield },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 

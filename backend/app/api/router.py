@@ -5,7 +5,7 @@ Main router that includes all API endpoints
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, organizations, campaigns, copilot, webhooks, dashboard, content, audit, integrations
+from app.api.v1 import auth, organizations, campaigns, copilot, webhooks, dashboard, content, audit, integrations, flows, launchpad, personas, strategy, ads, channels, competitors
 
 api_router = APIRouter()
 
@@ -70,5 +70,54 @@ api_router.include_router(
     integrations.router,
     prefix="/integrations",
     tags=["Integrations"]
+)
+
+# FlowBuilder endpoints
+api_router.include_router(
+    flows.router,
+    prefix="/flows",
+    tags=["FlowBuilder"]
+)
+
+# LaunchPad endpoints
+api_router.include_router(
+    launchpad.router,
+    prefix="/launchpad",
+    tags=["LaunchPad"]
+)
+
+# AudienceGenome endpoints
+api_router.include_router(
+    personas.router,
+    prefix="/personas",
+    tags=["AudienceGenome"]
+)
+
+# NeuroPlan & BrainSpark endpoints
+api_router.include_router(
+    strategy.router,
+    prefix="/strategy",
+    tags=["NeuroPlan", "BrainSpark"]
+)
+
+# AdPilot endpoints
+api_router.include_router(
+    ads.router,
+    prefix="/ads",
+    tags=["AdPilot"]
+)
+
+# ChannelPulse endpoints
+api_router.include_router(
+    channels.router,
+    prefix="/channels",
+    tags=["ChannelPulse"]
+)
+
+# BattleStation, TrendRadar, CrisisShield endpoints
+api_router.include_router(
+    competitors.router,
+    prefix="/intelligence",
+    tags=["BattleStation", "TrendRadar", "CrisisShield"]
 )
 
