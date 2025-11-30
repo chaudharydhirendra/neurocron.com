@@ -9,7 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSoc
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_db, get_current_user
+from app.core.deps import get_db
+from app.api.v1.auth import get_current_user
+from app.models.user import User
 from app.services.copilot.engine import CopilotEngine
 
 router = APIRouter()
@@ -41,7 +43,7 @@ class ConversationHistory(BaseModel):
 async def chat(
     message: ChatMessage,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Send a message to NeuroCopilot and get a response.
@@ -60,7 +62,7 @@ async def chat(
     """
     try:
         engine = CopilotEngine(
-            user_id=current_user["id"],
+            user_id=str(current_user.id),
             org_id=str(message.org_id) if message.org_id else None,
             db=db,
         )
@@ -129,7 +131,7 @@ async def websocket_chat(
 
 @router.get("/suggestions")
 async def get_suggestions(
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get contextual suggestions for what to ask NeuroCopilot.
@@ -153,7 +155,7 @@ async def get_suggestions(
 @router.get("/history")
 async def get_history(
     limit: int = 20,
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get recent conversation history with NeuroCopilot.
@@ -167,7 +169,7 @@ async def get_history(
 
 @router.delete("/history")
 async def clear_history(
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Clear conversation history.

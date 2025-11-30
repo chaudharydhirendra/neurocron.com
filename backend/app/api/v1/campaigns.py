@@ -9,9 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.core.deps import get_db, get_current_user
+from app.core.deps import get_db
+from app.api.v1.auth import get_current_user
 from app.models.campaign import Campaign, CampaignStatus
 from app.models.organization import OrganizationMember
+from app.models.user import User
 from app.schemas.campaign import (
     CampaignCreate,
     CampaignUpdate,
@@ -26,7 +28,7 @@ async def create_campaign(
     campaign_in: CampaignCreate,
     org_id: UUID = Query(..., description="Organization ID"),
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Create a new marketing campaign.
@@ -37,7 +39,7 @@ async def create_campaign(
     result = await db.execute(
         select(OrganizationMember)
         .where(OrganizationMember.organization_id == org_id)
-        .where(OrganizationMember.user_id == UUID(current_user["id"]))
+        .where(OrganizationMember.user_id == current_user.id)
         .where(OrganizationMember.is_active == True)
     )
     member = result.scalar_one_or_none()
@@ -76,7 +78,7 @@ async def list_campaigns(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     List campaigns for an organization.
@@ -87,7 +89,7 @@ async def list_campaigns(
     result = await db.execute(
         select(OrganizationMember)
         .where(OrganizationMember.organization_id == org_id)
-        .where(OrganizationMember.user_id == UUID(current_user["id"]))
+        .where(OrganizationMember.user_id == current_user.id)
     )
     if not result.scalar_one_or_none():
         raise HTTPException(
@@ -114,7 +116,7 @@ async def list_campaigns(
 async def get_campaign(
     campaign_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get campaign details.
@@ -134,7 +136,7 @@ async def get_campaign(
     result = await db.execute(
         select(OrganizationMember)
         .where(OrganizationMember.organization_id == campaign.organization_id)
-        .where(OrganizationMember.user_id == UUID(current_user["id"]))
+        .where(OrganizationMember.user_id == current_user.id)
     )
     if not result.scalar_one_or_none():
         raise HTTPException(
@@ -150,7 +152,7 @@ async def update_campaign(
     campaign_id: UUID,
     campaign_in: CampaignUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Update campaign details.
@@ -170,7 +172,7 @@ async def update_campaign(
     result = await db.execute(
         select(OrganizationMember)
         .where(OrganizationMember.organization_id == campaign.organization_id)
-        .where(OrganizationMember.user_id == UUID(current_user["id"]))
+        .where(OrganizationMember.user_id == current_user.id)
     )
     if not result.scalar_one_or_none():
         raise HTTPException(
@@ -193,7 +195,7 @@ async def update_campaign(
 async def delete_campaign(
     campaign_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Delete a campaign.
@@ -213,7 +215,7 @@ async def delete_campaign(
     result = await db.execute(
         select(OrganizationMember)
         .where(OrganizationMember.organization_id == campaign.organization_id)
-        .where(OrganizationMember.user_id == UUID(current_user["id"]))
+        .where(OrganizationMember.user_id == current_user.id)
     )
     if not result.scalar_one_or_none():
         raise HTTPException(
@@ -231,7 +233,7 @@ async def delete_campaign(
 async def activate_campaign(
     campaign_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Activate a campaign (change status to active).
@@ -258,7 +260,7 @@ async def activate_campaign(
 async def pause_campaign(
     campaign_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Pause an active campaign.

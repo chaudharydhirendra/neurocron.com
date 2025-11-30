@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   Send,
@@ -11,15 +12,24 @@ import {
   Zap,
   BarChart3,
   Megaphone,
+  Copy,
+  Check,
+  RefreshCw,
 } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
+import { authFetch } from "@/lib/auth";
+import { cn } from "@/lib/utils";
 
 interface Message {
+  id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  suggestions?: string[];
+  isError?: boolean;
 }
 
-const suggestions = [
+const initialSuggestions = [
   { icon: Megaphone, text: "Create a new campaign for product launch" },
   { icon: BarChart3, text: "Analyze my last week's performance" },
   { icon: Lightbulb, text: "Generate content ideas for social media" },
@@ -27,8 +37,11 @@ const suggestions = [
 ];
 
 export default function CopilotPage() {
+  const searchParams = useSearchParams();
+  const { organization } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
     {
+      id: "welcome",
       role: "assistant",
       content:
         "Hello! I'm NeuroCopilot, your AI marketing assistant. I can help you create campaigns, analyze performance, generate content, and optimize your marketing. What would you like to do today?",
@@ -37,7 +50,16 @@ export default function CopilotPage() {
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Check for initial query from URL
+  useEffect(() => {
+    const query = searchParams.get("q");
+    if (query && messages.length === 1) {
+      setInput(query);
+    }
+  }, [searchParams, messages.length]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -47,51 +69,142 @@ export default function CopilotPage() {
     scrollToBottom();
   }, [messages]);
 
+  const generateId = () => Math.random().toString(36).substring(2, 9);
+
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
     const userMessage: Message = {
+      id: generateId(),
       role: "user",
       content: input,
       timestamp: new Date(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
+    const currentInput = input;
     setInput("");
     setIsLoading(true);
 
-    // Simulate API call
-    setTimeout(() => {
+    try {
+      const response = await authFetch("/api/v1/copilot/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          content: currentInput,
+          org_id: organization?.id,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to get response");
+      }
+
+      const data = await response.json();
+
       const assistantMessage: Message = {
+        id: generateId(),
         role: "assistant",
-        content: generateResponse(input),
+        content: data.message,
         timestamp: new Date(),
+        suggestions: data.suggestions,
       };
+
       setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      const errorMessage: Message = {
+        id: generateId(),
+        role: "assistant",
+        content:
+          "I'm having trouble connecting right now. Please try again in a moment.",
+        timestamp: new Date(),
+        isError: true,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
-  const generateResponse = (input: string): string => {
-    const lower = input.toLowerCase();
-    
-    if (lower.includes("campaign") && (lower.includes("create") || lower.includes("new"))) {
-      return "I'd be happy to help you create a new campaign! To get started, I'll need a few details:\n\n1. **Campaign Name**: What would you like to call this campaign?\n2. **Goal**: What's the primary objective? (Brand awareness, Lead generation, Sales, etc.)\n3. **Budget**: What's your budget for this campaign?\n4. **Duration**: When should it start and end?\n\nOnce you provide these details, I'll generate a complete strategy including targeting, content, and channel recommendations.";
+  const handleCopy = async (id: string, content: string) => {
+    await navigator.clipboard.writeText(content);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleRetry = async (messageIndex: number) => {
+    // Find the user message before the error
+    const userMessage = messages
+      .slice(0, messageIndex)
+      .reverse()
+      .find((m) => m.role === "user");
+    if (userMessage) {
+      setInput(userMessage.content);
+      // Remove the error message and the user message
+      setMessages((prev) => prev.slice(0, messageIndex - 1));
     }
-    
-    if (lower.includes("analyze") || lower.includes("performance")) {
-      return "📊 **Performance Summary (Last 7 Days)**\n\n• **Total Spend**: $8,450 (+12% vs previous week)\n• **Impressions**: 1.2M (+8%)\n• **Clicks**: 24.5K (+15%)\n• **Conversions**: 567 (+23%)\n• **ROAS**: 3.2x\n\n**Key Insights:**\n1. Your 'Product Launch' campaign is outperforming expectations by 34%\n2. Instagram is your best-performing channel with 2.1x ROAS\n3. Ad creative #3 has the highest CTR (4.2%)\n\n**Recommendations:**\n- Increase budget for Instagram ads\n- A/B test new creatives on Facebook\n- Consider expanding to TikTok based on audience demographics\n\nWould you like me to implement any of these recommendations?";
-    }
-    
-    if (lower.includes("content") || lower.includes("ideas")) {
-      return "🎨 **Content Ideas for Your Brand**\n\nHere are 5 content ideas based on your audience and trending topics:\n\n1. **Behind-the-Scenes**: Show your team's daily workflow\n2. **Customer Spotlight**: Feature a success story from a recent client\n3. **Industry Trend Analysis**: Create a carousel about emerging trends\n4. **Product Tips**: Quick tips for getting the most out of your product\n5. **User-Generated Content**: Repost and celebrate customer content\n\nWant me to generate full content briefs for any of these? I can also create the actual posts for you.";
-    }
-    
-    return "I understand you're asking about marketing. I can help with:\n\n• **Creating campaigns** - I'll build complete strategies with targeting, content, and budget allocation\n• **Analyzing performance** - Get insights on what's working and what needs improvement\n• **Generating content** - I'll create posts, ads, emails, and more\n• **Optimizing campaigns** - Automatic improvements based on performance data\n\nWhat would you like to focus on?";
   };
 
   const handleSuggestionClick = (text: string) => {
     setInput(text);
+  };
+
+  const formatContent = (content: string) => {
+    // Simple markdown-like formatting
+    return content
+      .split("\n")
+      .map((line, i) => {
+        // Headers
+        if (line.startsWith("**") && line.endsWith("**")) {
+          return (
+            <strong key={i} className="block text-white">
+              {line.slice(2, -2)}
+            </strong>
+          );
+        }
+        // Bold text
+        const boldRegex = /\*\*(.*?)\*\*/g;
+        if (boldRegex.test(line)) {
+          const parts = line.split(boldRegex);
+          return (
+            <span key={i} className="block">
+              {parts.map((part, j) =>
+                j % 2 === 1 ? (
+                  <strong key={j} className="text-white">
+                    {part}
+                  </strong>
+                ) : (
+                  part
+                )
+              )}
+            </span>
+          );
+        }
+        // List items
+        if (line.startsWith("• ") || line.startsWith("- ")) {
+          return (
+            <li key={i} className="ml-4">
+              {line.slice(2)}
+            </li>
+          );
+        }
+        // Numbered items
+        if (/^\d+\.\s/.test(line)) {
+          return (
+            <li key={i} className="ml-4">
+              {line}
+            </li>
+          );
+        }
+        // Empty lines
+        if (!line.trim()) {
+          return <br key={i} />;
+        }
+        return (
+          <span key={i} className="block">
+            {line}
+          </span>
+        );
+      });
   };
 
   return (
@@ -107,25 +220,30 @@ export default function CopilotPage() {
             <p className="text-sm text-white/60">Your AI Marketing Assistant</p>
           </div>
         </div>
+        {organization && (
+          <div className="text-sm text-white/40">
+            {organization.name}
+          </div>
+        )}
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto space-y-4 mb-4">
+      <div className="flex-1 overflow-y-auto space-y-4 mb-4 pr-2">
         {messages.map((message, i) => (
           <motion.div
-            key={i}
+            key={message.id}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`flex gap-3 ${
-              message.role === "user" ? "flex-row-reverse" : ""
-            }`}
+            className={cn(
+              "flex gap-3",
+              message.role === "user" && "flex-row-reverse"
+            )}
           >
             <div
-              className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                message.role === "assistant"
-                  ? "bg-neural-gradient"
-                  : "bg-electric"
-              }`}
+              className={cn(
+                "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0",
+                message.role === "assistant" ? "bg-neural-gradient" : "bg-electric"
+              )}
             >
               {message.role === "assistant" ? (
                 <Sparkles className="w-4 h-4" />
@@ -134,19 +252,70 @@ export default function CopilotPage() {
               )}
             </div>
             <div
-              className={`max-w-[70%] p-4 rounded-2xl ${
+              className={cn(
+                "max-w-[70%] p-4 rounded-2xl relative group",
                 message.role === "assistant"
-                  ? "bg-white/5"
+                  ? message.isError
+                    ? "bg-red-500/10 border border-red-500/20"
+                    : "bg-white/5"
                   : "bg-electric/20"
-              }`}
+              )}
             >
-              <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-              <p className="text-xs text-white/30 mt-2">
-                {message.timestamp.toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </p>
+              <div className="text-sm whitespace-pre-wrap">
+                {formatContent(message.content)}
+              </div>
+
+              {/* Suggestions */}
+              {message.suggestions && message.suggestions.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-white/10">
+                  <p className="text-xs text-white/40 mb-2">Suggestions:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {message.suggestions.map((suggestion, j) => (
+                      <button
+                        key={j}
+                        onClick={() => handleSuggestionClick(suggestion)}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-white/5 hover:bg-electric/10 hover:text-electric transition-colors"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between mt-3">
+                <p className="text-xs text-white/30">
+                  {message.timestamp.toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </p>
+
+                {message.role === "assistant" && (
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => handleCopy(message.id, message.content)}
+                      className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
+                      title="Copy"
+                    >
+                      {copiedId === message.id ? (
+                        <Check className="w-4 h-4 text-green-400" />
+                      ) : (
+                        <Copy className="w-4 h-4 text-white/40" />
+                      )}
+                    </button>
+                    {message.isError && (
+                      <button
+                        onClick={() => handleRetry(i)}
+                        className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
+                        title="Retry"
+                      >
+                        <RefreshCw className="w-4 h-4 text-white/40" />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </motion.div>
         ))}
@@ -161,7 +330,10 @@ export default function CopilotPage() {
               <Sparkles className="w-4 h-4" />
             </div>
             <div className="p-4 rounded-2xl bg-white/5">
-              <Loader2 className="w-5 h-5 animate-spin text-electric" />
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-5 h-5 animate-spin text-electric" />
+                <span className="text-sm text-white/60">Thinking...</span>
+              </div>
             </div>
           </motion.div>
         )}
@@ -172,17 +344,22 @@ export default function CopilotPage() {
       {/* Suggestions */}
       {messages.length <= 1 && (
         <div className="mb-4">
-          <p className="text-sm text-white/50 mb-3">Suggestions:</p>
+          <p className="text-sm text-white/50 mb-3">Get started:</p>
           <div className="grid grid-cols-2 gap-2">
-            {suggestions.map((suggestion, i) => (
-              <button
+            {initialSuggestions.map((suggestion, i) => (
+              <motion.button
                 key={i}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.1 }}
                 onClick={() => handleSuggestionClick(suggestion.text)}
-                className="flex items-center gap-3 p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors text-left"
+                className="flex items-center gap-3 p-4 rounded-xl bg-white/5 hover:bg-white/10 hover:border-electric/30 border border-transparent transition-all text-left group"
               >
-                <suggestion.icon className="w-5 h-5 text-electric" />
+                <div className="w-10 h-10 rounded-xl bg-electric/10 flex items-center justify-center group-hover:bg-electric/20 transition-colors">
+                  <suggestion.icon className="w-5 h-5 text-electric" />
+                </div>
                 <span className="text-sm">{suggestion.text}</span>
-              </button>
+              </motion.button>
             ))}
           </div>
         </div>
@@ -202,7 +379,7 @@ export default function CopilotPage() {
         <button
           onClick={handleSend}
           disabled={!input.trim() || isLoading}
-          className="btn-primary px-4 disabled:opacity-50"
+          className="btn-primary px-4 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Send className="w-5 h-5" />
         </button>
@@ -210,4 +387,3 @@ export default function CopilotPage() {
     </div>
   );
 }
-

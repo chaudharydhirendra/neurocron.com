@@ -10,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import re
 
-from app.core.deps import get_db, get_current_user
+from app.core.deps import get_db
+from app.api.v1.auth import get_current_user
 from app.models.organization import Organization, OrganizationMember
-from app.models.user import UserRole
+from app.models.user import User, UserRole
 from app.schemas.organization import (
     OrganizationCreate,
     OrganizationUpdate,
@@ -34,7 +35,7 @@ def generate_slug(name: str) -> str:
 async def create_organization(
     org_in: OrganizationCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Create a new organization.
@@ -69,7 +70,7 @@ async def create_organization(
     # Add creator as owner
     member = OrganizationMember(
         organization_id=org.id,
-        user_id=UUID(current_user["id"]),
+        user_id=current_user.id,
         role=UserRole.OWNER,
     )
     db.add(member)
@@ -83,7 +84,7 @@ async def create_organization(
 @router.get("/", response_model=List[OrganizationResponse])
 async def list_organizations(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     List all organizations the current user is a member of.
@@ -91,7 +92,7 @@ async def list_organizations(
     result = await db.execute(
         select(Organization)
         .join(OrganizationMember)
-        .where(OrganizationMember.user_id == UUID(current_user["id"]))
+        .where(OrganizationMember.user_id == current_user.id)
         .where(OrganizationMember.is_active == True)
     )
     organizations = result.scalars().all()
@@ -102,7 +103,7 @@ async def list_organizations(
 async def get_organization(
     org_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get organization details.
@@ -113,7 +114,7 @@ async def get_organization(
     result = await db.execute(
         select(OrganizationMember)
         .where(OrganizationMember.organization_id == org_id)
-        .where(OrganizationMember.user_id == UUID(current_user["id"]))
+        .where(OrganizationMember.user_id == current_user.id)
         .where(OrganizationMember.is_active == True)
     )
     member = result.scalar_one_or_none()
@@ -138,7 +139,7 @@ async def update_organization(
     org_id: UUID,
     org_in: OrganizationUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Update organization details.
@@ -149,7 +150,7 @@ async def update_organization(
     result = await db.execute(
         select(OrganizationMember)
         .where(OrganizationMember.organization_id == org_id)
-        .where(OrganizationMember.user_id == UUID(current_user["id"]))
+        .where(OrganizationMember.user_id == current_user.id)
         .where(OrganizationMember.role.in_([UserRole.OWNER, UserRole.ADMIN]))
     )
     member = result.scalar_one_or_none()
@@ -187,7 +188,7 @@ async def update_organization(
 async def delete_organization(
     org_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Delete an organization.
@@ -198,7 +199,7 @@ async def delete_organization(
     result = await db.execute(
         select(OrganizationMember)
         .where(OrganizationMember.organization_id == org_id)
-        .where(OrganizationMember.user_id == UUID(current_user["id"]))
+        .where(OrganizationMember.user_id == current_user.id)
         .where(OrganizationMember.role == UserRole.OWNER)
     )
     member = result.scalar_one_or_none()

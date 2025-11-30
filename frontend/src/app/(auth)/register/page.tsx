@@ -3,23 +3,34 @@
 import { useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Brain, Mail, Lock, User, ArrowRight, Loader2, Check } from "lucide-react";
+import { Brain, Mail, Lock, User, ArrowRight, Loader2, Check, AlertCircle } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
 
 export default function RegisterPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
+  const { register, isLoading } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
+    setError("");
     
-    // TODO: Implement actual registration
-    setTimeout(() => {
-      setIsLoading(false);
-      window.location.href = "/dashboard";
-    }, 1500);
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters");
+      return;
+    }
+    
+    const result = await register({ 
+      email, 
+      password, 
+      full_name: name 
+    });
+    
+    if (!result.success) {
+      setError(result.error || "Registration failed");
+    }
   };
 
   return (
@@ -44,6 +55,13 @@ export default function RegisterPage() {
             Start your 14-day free trial
           </p>
 
+          {error && (
+            <div className="flex items-center gap-2 p-3 mb-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400">
+              <AlertCircle className="w-5 h-5 flex-shrink-0" />
+              <span className="text-sm">{error}</span>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm text-white/60 mb-2">Full name</label>
@@ -56,6 +74,7 @@ export default function RegisterPage() {
                   placeholder="John Doe"
                   className="input pl-11"
                   required
+                  disabled={isLoading}
                 />
               </div>
             </div>
@@ -71,6 +90,7 @@ export default function RegisterPage() {
                   placeholder="you@company.com"
                   className="input pl-11"
                   required
+                  disabled={isLoading}
                 />
               </div>
             </div>
@@ -87,6 +107,7 @@ export default function RegisterPage() {
                   className="input pl-11"
                   required
                   minLength={8}
+                  disabled={isLoading}
                 />
               </div>
               <p className="text-xs text-white/40 mt-1">Minimum 8 characters</p>
@@ -139,4 +160,3 @@ export default function RegisterPage() {
     </div>
   );
 }
-
