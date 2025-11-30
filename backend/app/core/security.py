@@ -4,16 +4,12 @@ JWT authentication and password hashing
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Any
+from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel
+import bcrypt
 
 from app.core.config import settings
-
-
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class TokenPayload(BaseModel):
@@ -92,11 +88,18 @@ def decode_token(token: str) -> Optional[TokenPayload]:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify password against hash"""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify password against hash using bcrypt directly"""
+    try:
+        password_bytes = plain_password.encode('utf-8')
+        hashed_bytes = hashed_password.encode('utf-8')
+        return bcrypt.checkpw(password_bytes, hashed_bytes)
+    except Exception:
+        return False
 
 
 def hash_password(password: str) -> str:
-    """Hash password using bcrypt"""
-    return pwd_context.hash(password)
-
+    """Hash password using bcrypt directly"""
+    password_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode('utf-8')
