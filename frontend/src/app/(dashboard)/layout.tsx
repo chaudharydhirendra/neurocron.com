@@ -26,6 +26,11 @@ import {
   X,
   CreditCard,
   User,
+  MousePointer,
+  HeartHandshake,
+  Share2,
+  FlaskConical,
+  Images,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ProtectedRoute } from "@/components/protected-route";
@@ -48,6 +53,12 @@ const navigation = [
   { name: "Inbox", href: "/inbox", icon: Inbox },
   { name: "Intelligence", href: "/intelligence", icon: Swords },
   { name: "Audit", href: "/audit", icon: Shield },
+  { name: "Customers", href: "/customers", icon: Users },
+  { name: "Behavior", href: "/behavior", icon: MousePointer },
+  { name: "Retention", href: "/retention", icon: HeartHandshake },
+  { name: "Viral", href: "/viral", icon: Share2 },
+  { name: "Simulator", href: "/simulator", icon: FlaskConical },
+  { name: "Assets", href: "/assets", icon: Images },
   { name: "Team", href: "/team", icon: Users },
   { name: "Billing", href: "/billing", icon: CreditCard },
   { name: "Profile", href: "/profile", icon: User },

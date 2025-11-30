@@ -5,7 +5,7 @@ Main router that includes all API endpoints
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, organizations, campaigns, copilot, webhooks, dashboard, content, audit, integrations, flows, launchpad, personas, strategy, ads, channels, competitors, billing, websocket, notifications, teams
+from app.api.v1 import auth, organizations, campaigns, copilot, webhooks, dashboard, content, audit, integrations, flows, launchpad, personas, strategy, ads, channels, competitors, billing, websocket, notifications, teams, customer_dna, behavior, retention, viral, simulator, assets
 
 api_router = APIRouter()
 
@@ -147,5 +147,47 @@ api_router.include_router(
     teams.router,
     prefix="/teams",
     tags=["Teams"]
+)
+
+# CustomerDNA endpoints
+api_router.include_router(
+    customer_dna.router,
+    prefix="/customer-dna",
+    tags=["CustomerDNA"]
+)
+
+# BehaviorMind endpoints
+api_router.include_router(
+    behavior.router,
+    prefix="/behavior",
+    tags=["BehaviorMind"]
+)
+
+# RetentionAI endpoints
+api_router.include_router(
+    retention.router,
+    prefix="/retention",
+    tags=["RetentionAI"]
+)
+
+# ViralEngine endpoints
+api_router.include_router(
+    viral.router,
+    prefix="/viral",
+    tags=["ViralEngine"]
+)
+
+# SimulatorX endpoints
+api_router.include_router(
+    simulator.router,
+    prefix="/simulator",
+    tags=["SimulatorX"]
+)
+
+# BrandVault endpoints
+api_router.include_router(
+    assets.router,
+    prefix="/assets",
+    tags=["BrandVault"]
 )
 

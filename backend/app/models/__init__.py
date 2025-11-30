@@ -21,6 +21,12 @@ from app.models.intelligence import (
 )
 from app.models.billing import Subscription, Invoice, UsageRecord
 from app.models.notification import Notification
+from app.models.customer import CustomerProfile, CustomerEvent, CustomerSegment, CustomerJourney
+from app.models.behavior import PageSession, ClickEvent, ScrollEvent, FormInteraction, HeatmapSnapshot, ConversionFunnel
+from app.models.retention import ChurnPrediction, ChurnRiskLevel, RetentionCampaign, RetentionAction, LoyaltyProgram, CustomerLoyalty, LoyaltyTransaction
+from app.models.referral import ReferralProgram, ReferralProgramStatus, Referral, Contest, ContestEntry, GamificationBadge, CustomerBadge, Leaderboard
+from app.models.simulation import Simulation, SimulationStatus, SimulationType, SimulationTemplate, PredictionModel, ForecastScenario
+from app.models.asset import Asset, AssetType, AssetFolder, AssetTag, AssetTagMapping, BrandGuideline
 
 __all__ = [
     "Base",
@@ -60,4 +66,47 @@ __all__ = [
     "UsageRecord",
     # Notifications
     "Notification",
+    # CustomerDNA
+    "CustomerProfile",
+    "CustomerEvent",
+    "CustomerSegment",
+    "CustomerJourney",
+    # BehaviorMind
+    "PageSession",
+    "ClickEvent",
+    "ScrollEvent",
+    "FormInteraction",
+    "HeatmapSnapshot",
+    "ConversionFunnel",
+    # RetentionAI
+    "ChurnPrediction",
+    "ChurnRiskLevel",
+    "RetentionCampaign",
+    "RetentionAction",
+    "LoyaltyProgram",
+    "CustomerLoyalty",
+    "LoyaltyTransaction",
+    # ViralEngine
+    "ReferralProgram",
+    "ReferralProgramStatus",
+    "Referral",
+    "Contest",
+    "ContestEntry",
+    "GamificationBadge",
+    "CustomerBadge",
+    "Leaderboard",
+    # SimulatorX
+    "Simulation",
+    "SimulationStatus",
+    "SimulationType",
+    "SimulationTemplate",
+    "PredictionModel",
+    "ForecastScenario",
+    # BrandVault
+    "Asset",
+    "AssetType",
+    "AssetFolder",
+    "AssetTag",
+    "AssetTagMapping",
+    "BrandGuideline",
 ]
